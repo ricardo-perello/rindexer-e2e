@@ -180,14 +180,8 @@ impl TestRunner {
                     expected_result: None,
                 },
                 TestStep {
-                    name: "wait_for_sync".to_string(),
-                    action: "wait_sync".to_string(),
-                    params: Some(serde_json::json!({"target_block": 5})),
-                    expected_result: None,
-                },
-                TestStep {
-                    name: "verify_native_transfers".to_string(),
-                    action: "verify_native_transfers".to_string(),
+                    name: "verify_events".to_string(),
+                    action: "verify_events".to_string(),
                     params: None,
                     expected_result: None,
                 }
