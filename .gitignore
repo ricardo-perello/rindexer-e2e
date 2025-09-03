@@ -24,3 +24,7 @@ Thumbs.db
 # Test artifacts
 test_output/
 temp_projects/
+
+# Forge/Foundry build artifacts
+cache/
+out/
