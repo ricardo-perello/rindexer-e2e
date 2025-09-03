@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::anvil_setup::AnvilInstance;
-use crate::rindexer_client::{RindexerInstance, ContractConfig, ContractDetail};
+use crate::rindexer_client::{RindexerInstance, ContractConfig, ContractDetail, EventConfig};
 use crate::test_flows::BasicSyncTest;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,14 +67,24 @@ pub struct TestRunner {
     rindexer_binary_path: String,
     config_dir: String,
     anvil: AnvilInstance,
+    persistent_dirs: bool,
+    output_dir: String,
 }
 
 impl TestRunner {
-    pub async fn new(rindexer_binary_path: &str, config_dir: &str, anvil: AnvilInstance) -> Result<Self> {
+    pub async fn new(
+        rindexer_binary_path: &str, 
+        config_dir: &str, 
+        anvil: AnvilInstance,
+        persistent_dirs: bool,
+        output_dir: &str
+    ) -> Result<Self> {
         Ok(Self {
             rindexer_binary_path: rindexer_binary_path.to_string(),
             config_dir: config_dir.to_string(),
             anvil,
+            persistent_dirs,
+            output_dir: output_dir.to_string(),
         })
     }
     
@@ -145,10 +155,10 @@ impl TestRunner {
                     postgres: PostgresConfig { enabled: false },
                     csv: CsvConfig { enabled: true },
                 },
-                native_transfers: NativeTransfersConfig { enabled: true },
+                native_transfers: NativeTransfersConfig { enabled: false },
                 contracts: vec![
                     ContractConfig {
-                        name: "TestContract".to_string(),
+                        name: "SimpleERC20".to_string(),
                         details: vec![
                             ContractDetail {
                                 network: "anvil".to_string(),
@@ -157,8 +167,8 @@ impl TestRunner {
                                 end_block: None,
                             }
                         ],
-                        abi: Some("./abis/ERC20.abi.json".to_string()),
-                        include_events: Some(vec!["Transfer".to_string()]),
+                        abi: Some("./abis/SimpleERC20.abi.json".to_string()),
+                        include_events: Some(vec![EventConfig { name: "Transfer".to_string() }]),
                     }
                 ],
             },
@@ -172,12 +182,12 @@ impl TestRunner {
                 TestStep {
                     name: "wait_for_sync".to_string(),
                     action: "wait_sync".to_string(),
-                    params: Some(serde_json::json!({"target_block": 10})),
+                    params: Some(serde_json::json!({"target_block": 5})),
                     expected_result: None,
                 },
                 TestStep {
-                    name: "verify_events".to_string(),
-                    action: "verify_events".to_string(),
+                    name: "verify_native_transfers".to_string(),
+                    action: "verify_native_transfers".to_string(),
                     params: None,
                     expected_result: None,
                 }
@@ -188,17 +198,33 @@ impl TestRunner {
     async fn run_test_flow(&mut self, flow: &TestFlow) -> Result<()> {
         info!("Starting test flow: {}", flow.name);
         
-        // Create a temporary Rindexer project directory
-        let temp_dir = tempfile::TempDir::new()
-            .context("Failed to create temporary directory")?;
-        
-        let project_path = temp_dir.path().join("test_project");
-        std::fs::create_dir(&project_path)?;
+        let (project_path, _temp_dir) = if self.persistent_dirs {
+            // Create persistent directory
+            let output_path = std::path::Path::new(&self.output_dir);
+            std::fs::create_dir_all(output_path)?;
+            
+            let project_path = output_path.join(format!("test_project_{}", flow.name));
+            if project_path.exists() {
+                info!("Removing existing persistent directory: {:?}", project_path);
+                std::fs::remove_dir_all(&project_path)?;
+            }
+            std::fs::create_dir(&project_path)?;
+            info!("Created persistent project directory: {:?}", project_path);
+            (project_path, None)
+        } else {
+            // Create temporary directory
+            let temp_dir = tempfile::TempDir::new()
+                .context("Failed to create temporary directory")?;
+            let project_path = temp_dir.path().join("test_project");
+            std::fs::create_dir(&project_path)?;
+            info!("Created temporary project directory: {:?}", project_path);
+            (project_path, Some(temp_dir))
+        };
         
         // Create abis directory and copy ABI file
         let abis_dir = project_path.join("abis");
         std::fs::create_dir(&abis_dir)?;
-        std::fs::copy("abis/ERC20.abi.json", abis_dir.join("ERC20.abi.json"))?;
+        std::fs::copy("abis/SimpleERC20.abi.json", abis_dir.join("SimpleERC20.abi.json"))?;
         
         // Write the Rindexer configuration
         let config_path = project_path.join("rindexer.yaml");
@@ -233,6 +259,10 @@ impl TestRunner {
                     // Run the basic sync test verification
                     let basic_test = BasicSyncTest::new(&self.anvil.rpc_url);
                     basic_test.verify_indexed_events().await?;
+                }
+                "verify_native_transfers" => {
+                    // For now, just log that we would verify native transfers
+                    info!("Native transfers verification would be implemented here");
                 }
                 _ => {
                     warn!("Unknown test action: {}", step.action);

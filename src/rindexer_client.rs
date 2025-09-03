@@ -1,15 +1,18 @@
-use std::process::{Command, Stdio};
+
+
 use std::time::Duration;
+use std::process::Stdio;
 use tokio::time::sleep;
 use anyhow::{Result, Context};
-use tracing::info;
+use tracing::{info, debug, error};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
-use wait_timeout::ChildExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command as TokioCommand;
 
 #[derive(Debug)]
 pub struct RindexerInstance {
-    pub process: Option<std::process::Child>,
+    pub process: Option<tokio::process::Child>,
     pub config_path: String,
     pub temp_dir: Option<TempDir>,
 }
@@ -29,7 +32,12 @@ pub struct ContractConfig {
     pub name: String,
     pub details: Vec<ContractDetail>,
     pub abi: Option<String>,
-    pub include_events: Option<Vec<String>>,
+    pub include_events: Option<Vec<EventConfig>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventConfig {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,15 +55,18 @@ impl RindexerInstance {
         info!("Starting Rindexer instance from project: {:?}", project_path);
         
         // Start Rindexer process from the project directory
-        let mut cmd = Command::new(binary_path);
+        let mut cmd = TokioCommand::new(binary_path);
         cmd.current_dir(&project_path)
            .arg("start")
-           .arg("all")
+           .arg("indexer")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
         
         let mut child = cmd.spawn()
             .context("Failed to start Rindexer")?;
+        
+        // Start log streaming for Rindexer
+        Self::start_log_streaming(&mut child).await;
         
         // Wait for Rindexer to start
         sleep(Duration::from_millis(3000)).await;
@@ -63,15 +74,6 @@ impl RindexerInstance {
         // Check if process is still running
         match child.try_wait()? {
             Some(status) => {
-                // Try to read stderr to get the error message
-                if let Some(mut stderr) = child.stderr.take() {
-                    use std::io::Read;
-                    let mut stderr_output = String::new();
-                    let _ = stderr.read_to_string(&mut stderr_output);
-                    if !stderr_output.is_empty() {
-                        return Err(anyhow::anyhow!("Rindexer exited with status: {}. Error output: {}", status, stderr_output));
-                    }
-                }
                 return Err(anyhow::anyhow!("Rindexer exited with status: {}", status));
             }
             None => {
@@ -120,7 +122,6 @@ impl RindexerInstance {
         if let Some(mut child) = self.process.take() {
             info!("Stopping Rindexer instance");
             let _ = child.kill();
-            let _ = child.wait_timeout(Duration::from_secs(5));
         }
         
         if let Some(temp_dir) = self.temp_dir.take() {
@@ -147,7 +148,7 @@ impl RindexerInstance {
         std::fs::write(&config_path, config_content)?;
         
         // Start new process
-        let mut cmd = Command::new(binary_path);
+        let mut cmd = TokioCommand::new(binary_path);
         cmd.arg("--config")
            .arg(&config_path)
            .stdout(Stdio::piped())
@@ -165,6 +166,30 @@ impl RindexerInstance {
         
         Ok(())
     }
+    
+    async fn start_log_streaming(child: &mut tokio::process::Child) {
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    debug!("[RINDEXER] {}", line);
+                }
+            });
+        }
+        
+        if let Some(stderr) = child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    error!("[RINDEXER ERROR] {}", line);
+                }
+            });
+        }
+    }
 }
 
 impl Drop for RindexerInstance {
@@ -172,7 +197,8 @@ impl Drop for RindexerInstance {
         if let Some(mut child) = self.process.take() {
             info!("Shutting down Rindexer instance");
             let _ = child.kill();
-            let _ = child.wait_timeout(Duration::from_secs(5));
+            // Note: tokio::process::Child doesn't have wait_timeout, 
+            // but the process will be cleaned up when the child is dropped
         }
         
         if let Some(temp_dir) = self.temp_dir.take() {

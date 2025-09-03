@@ -1,6 +1,6 @@
 use clap::Parser;
 use tracing::{info, error};
-use tracing_subscriber;
+use tracing_subscriber::{fmt, EnvFilter};
 
 mod test_runner;
 mod anvil_setup;
@@ -28,14 +28,34 @@ struct Args {
     /// Anvil private key for funding test accounts
     #[arg(long, default_value = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")]
     private_key: String,
+    
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(long, default_value = "info")]
+    log_level: String,
+    
+    /// Use persistent directories instead of temporary ones for debugging
+    #[arg(long)]
+    persistent_dirs: bool,
+    
+    /// Directory to store persistent test data (only used with --persistent-dirs)
+    #[arg(long, default_value = "./test_output")]
+    output_dir: String,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
     let args = Args::parse();
+    
+    // Initialize tracing with configurable log level
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+    
+    fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .init();
     
     info!("Starting Rindexer E2E tests");
     info!("Binary: {}", args.rindexer_binary);
@@ -63,8 +83,14 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     
-    // Create test runner
-    let mut runner = TestRunner::new(&args.rindexer_binary, &config_dir, anvil).await?;
+    // Create test runner with persistent directory option
+    let mut runner = TestRunner::new(
+        &args.rindexer_binary, 
+        &config_dir, 
+        anvil,
+        args.persistent_dirs,
+        &args.output_dir
+    ).await?;
     
     // Run tests
     match runner.run_all_tests().await {

@@ -1,21 +1,22 @@
-use std::process::{Command, Stdio};
 use std::time::Duration;
+use std::process::Stdio;
 use tokio::time::sleep;
 use anyhow::{Result, Context};
-use tracing::info;
-use wait_timeout::ChildExt;
+use tracing::{info, debug, error};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command as TokioCommand;
 
 pub struct AnvilInstance {
     pub rpc_url: String,
     pub ws_url: String,
-    pub process: Option<std::process::Child>,
+    pub process: Option<tokio::process::Child>,
 }
 
 impl AnvilInstance {
     pub async fn start_local(private_key: &str) -> Result<Self> {
         info!("Starting local Anvil instance");
         
-        let mut cmd = Command::new("anvil");
+        let mut cmd = TokioCommand::new("anvil");
         cmd.arg("--chain-id")
            .arg("31337")
            .arg("--accounts")
@@ -28,12 +29,14 @@ impl AnvilInstance {
            .arg("1000000000")
            .arg("--block-time")
            .arg("1")
-           .arg("--silent")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
         
         let mut child = cmd.spawn()
             .context("Failed to start Anvil")?;
+        
+        // Start log streaming for Anvil
+        Self::start_log_streaming(&mut child).await;
         
         // Wait a bit for Anvil to start
         sleep(Duration::from_millis(2000)).await;
@@ -158,6 +161,30 @@ impl AnvilInstance {
         let block_number = u64::from_str_radix(hex_value.trim_start_matches("0x"), 16)?;
         Ok(block_number)
     }
+    
+    async fn start_log_streaming(child: &mut tokio::process::Child) {
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    debug!("[ANVIL] {}", line);
+                }
+            });
+        }
+        
+        if let Some(stderr) = child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    error!("[ANVIL ERROR] {}", line);
+                }
+            });
+        }
+    }
 }
 
 impl Drop for AnvilInstance {
@@ -165,7 +192,8 @@ impl Drop for AnvilInstance {
         if let Some(mut child) = self.process.take() {
             info!("Shutting down Anvil instance");
             let _ = child.kill();
-            let _ = child.wait_timeout(Duration::from_secs(5));
+            // Note: tokio::process::Child doesn't have wait_timeout, 
+            // but the process will be cleaned up when the child is dropped
         }
     }
 }
