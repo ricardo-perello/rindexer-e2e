@@ -2,6 +2,8 @@ pub mod anvil_setup;
 pub mod rindexer_client;
 pub mod test_flows;
 pub mod test_runner;
+pub mod test_suite;
+pub mod tests;
 
 #[cfg(test)]
 mod tests {
