@@ -28,7 +28,7 @@ impl TestCaseImpl for BasicConnectionTest {
         test_suite.wait_for_rindexer_ready(10).await?;
         
         // Verify Rindexer is still running (basic health check)
-        if test_suite.rindexer.is_none() {
+        if !test_suite.is_rindexer_running() {
             return Err(anyhow::anyhow!("Rindexer process is not running"));
         }
         

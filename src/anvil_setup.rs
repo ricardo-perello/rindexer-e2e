@@ -39,7 +39,7 @@ impl AnvilInstance {
         Self::start_log_streaming(&mut child).await;
         
         // Wait a bit for Anvil to start
-        sleep(Duration::from_millis(2000)).await;
+        sleep(Duration::from_millis(500)).await;
         
         // Check if process is still running
         match child.try_wait()? {
@@ -108,7 +108,7 @@ impl AnvilInstance {
             }
             
             attempts += 1;
-            sleep(Duration::from_millis(1000)).await;
+            sleep(Duration::from_millis(200)).await;
         }
         
         Err(anyhow::anyhow!("Anvil RPC failed to become ready after {} attempts", MAX_ATTEMPTS))

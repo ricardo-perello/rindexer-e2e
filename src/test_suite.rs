@@ -28,8 +28,8 @@ impl TestSuite {
             .arg("anvil")
             .output();
         
-        // Wait a moment for processes to be killed
-        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+        // Wait for processes to be killed and port to be free
+        wait_for_port_free(8545, 10).await?;
         
         // Start a fresh Anvil instance
         let anvil = AnvilInstance::start_local("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80").await
@@ -184,12 +184,8 @@ impl TestSuite {
     
     pub async fn wait_for_rindexer_ready(&mut self, timeout_seconds: u64) -> Result<()> {
         if let Some(rindexer) = &mut self.rindexer {
-            // Give Rindexer time to start up and begin indexing
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            //TODO: Add actual sync status check    
-            // For now, just wait a bit more for indexing to complete
-            // In a real implementation, we'd check the actual sync status
-            tokio::time::sleep(tokio::time::Duration::from_secs(timeout_seconds)).await;
+            // Use the new log-based sync completion detection
+            rindexer.wait_for_initial_sync_completion(timeout_seconds).await?;
         }
         Ok(())
     }
@@ -197,4 +193,35 @@ impl TestSuite {
     pub fn get_csv_output_path(&self) -> PathBuf {
         self.project_path.join("generated_csv")
     }
+    
+    pub fn is_rindexer_running(&self) -> bool {
+        if let Some(rindexer) = &self.rindexer {
+            if let Some(_process) = &rindexer.process {
+                // Process exists, assume it's running
+                // Note: We can't call try_wait() here because it requires &mut
+                // The process will be checked properly in the RindexerInstance methods
+                return true;
+            }
+        }
+        false
+    }
+}
+
+async fn wait_for_port_free(port: u16, max_attempts: u32) -> Result<()> {
+    for attempt in 1..=max_attempts {
+        // Try to connect to the port - if it fails, the port is free
+        match tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+            Ok(_) => {
+                // Port is still in use, wait a bit
+                if attempt < max_attempts {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+            Err(_) => {
+                // Port is free, we can proceed
+                return Ok(());
+            }
+        }
+    }
+    Err(anyhow::anyhow!("Port {} is still in use after {} attempts", port, max_attempts))
 }
