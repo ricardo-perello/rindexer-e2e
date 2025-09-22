@@ -6,127 +6,280 @@ use tokio::time::sleep;
 use anyhow::{Result, Context};
 use tracing::{info, debug, error};
 use serde::{Deserialize, Serialize};
-use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct RindexerInstance {
     pub process: Option<tokio::process::Child>,
-    pub config_path: String,
-    pub temp_dir: Option<TempDir>,
+    pub project_path: PathBuf,
+    pub binary_path: String,
     pub sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RindexerConfig {
-    pub rpc_url: String,
-    pub ws_url: String,
-    pub database_url: String,
-    pub contracts: Vec<ContractConfig>,
-    pub start_block: Option<u64>,
-    pub end_block: Option<u64>,
+#[derive(Debug, Clone)]
+pub enum RindexerCommand {
+    New { project_type: String, path: Option<PathBuf> },
+    Start { service: String, path: Option<PathBuf> },
+    Add { element: String, path: Option<PathBuf> },
+    Codegen { path: Option<PathBuf> },
+    Delete { path: Option<PathBuf> },
+    Phantom { path: Option<PathBuf> },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractConfig {
-    pub name: String,
-    pub details: Vec<ContractDetail>,
-    pub abi: Option<String>,
-    pub include_events: Option<Vec<EventConfig>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventConfig {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractDetail {
-    pub network: String,
-    pub address: String,
-    pub start_block: String,
-    pub end_block: Option<String>,
-}
 
 
 
 impl RindexerInstance {
-    pub async fn new(binary_path: &str, project_path: std::path::PathBuf) -> Result<Self> {
-        info!("Starting Rindexer instance from project: {:?}", project_path);
+    /// Create a new Rindexer instance (doesn't start any services)
+    pub fn new(binary_path: &str, project_path: PathBuf) -> Self {
+        Self {
+            process: None,
+            project_path,
+            binary_path: binary_path.to_string(),
+            sync_completed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Execute a rindexer CLI command
+    pub async fn execute_command(&self, command: RindexerCommand) -> Result<std::process::Output> {
+        let mut cmd = TokioCommand::new(&self.binary_path);
+        cmd.current_dir(&self.project_path);
         
-        // Start Rindexer process from the project directory
-        let mut cmd = TokioCommand::new(binary_path);
-        cmd.current_dir(&project_path)
+        match command {
+            RindexerCommand::New { project_type, path } => {
+                cmd.arg("new").arg(&project_type);
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+            RindexerCommand::Start { service, path } => {
+                cmd.arg("start").arg(&service);
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+            RindexerCommand::Add { element, path } => {
+                cmd.arg("add").arg(&element);
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+            RindexerCommand::Codegen { path } => {
+                cmd.arg("codegen");
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+            RindexerCommand::Delete { path } => {
+                cmd.arg("delete");
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+            RindexerCommand::Phantom { path } => {
+                cmd.arg("phantom");
+                if let Some(p) = path {
+                    cmd.arg("--path").arg(p);
+                }
+            }
+        }
+        
+        info!("Executing rindexer command: {:?}", cmd);
+        let output = cmd.output().await.context("Failed to execute rindexer command")?;
+        Ok(output)
+    }
+
+    /// Start the indexer service
+    pub async fn start_indexer(&mut self) -> Result<()> {
+        info!("Starting Rindexer indexer service from project: {:?}", self.project_path);
+        info!("Using Rindexer binary: {}", self.binary_path);
+        
+        // Check if binary exists and convert to absolute path
+        let binary_path = if self.binary_path.starts_with("../") {
+            // Convert relative path to absolute
+            let current_dir = std::env::current_dir()?;
+            current_dir.join(&self.binary_path).canonicalize()?
+        } else {
+            std::path::PathBuf::from(&self.binary_path)
+        };
+        
+        if !binary_path.exists() {
+            return Err(anyhow::anyhow!("Rindexer binary not found at: {}", binary_path.display()));
+        }
+        
+        let mut cmd = TokioCommand::new(&binary_path);
+        cmd.current_dir(&self.project_path)
            .arg("start")
            .arg("indexer")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
         
+        info!("Executing command: {:?}", cmd);
+        
         let mut child = cmd.spawn()
-            .context("Failed to start Rindexer")?;
-        
+            .context("Client: Failed to start Rindexer indexer")?;
+        debug!("Client: Rindexer indexer process started");
         // Start log streaming for Rindexer with completion detection
-        let sync_completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        Self::start_log_streaming_with_completion_detection(&mut child, sync_completed.clone()).await;
-        
+        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone()).await;
+        debug!("Client: Log streaming started");
         // Wait for Rindexer to start
         sleep(Duration::from_millis(500)).await;
         
         // Check if process is still running
         match child.try_wait()? {
             Some(status) => {
-                // If Rindexer exits quickly, it might be because there's nothing to index
-                // This is actually normal for minimal configurations
                 if status.success() {
-                    info!("Rindexer completed successfully (likely no events to index)");
+                    info!("Rindexer indexer completed successfully (likely no events to index)");
                 } else {
-                    return Err(anyhow::anyhow!("Rindexer exited with error status: {}", status));
+                    // Try to read stderr to get more details
+                    if let Some(mut stderr) = child.stderr.take() {
+                        let mut stderr_output = String::new();
+                        if let Ok(_) = tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut stderr_output).await {
+                            if !stderr_output.is_empty() {
+                                error!("Rindexer stderr: {}", stderr_output);
+                            }
+                        }
+                    }
+                    return Err(anyhow::anyhow!("Rindexer indexer exited with error status: {}", status));
                 }
             }
             None => {
-                info!("Rindexer process started successfully and is still running");
+                info!("Rindexer indexer process started successfully and is still running");
             }
         }
         
-        Ok(Self {
-            process: Some(child),
-            config_path: project_path.to_string_lossy().to_string(),
-            temp_dir: None,
-            sync_completed,
-        })
-    }
-    
-    pub async fn wait_for_sync(&mut self, target_block: u64, timeout_seconds: u64) -> Result<()> {
-        info!("Waiting for Rindexer to sync to block {}", target_block);
-        
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
-        
-        while start_time.elapsed() < timeout {
-                    // Check if process is still running
-        if let Some(process) = &mut self.process {
-            match process.try_wait()? {
-                Some(status) => {
-                    return Err(anyhow::anyhow!("Rindexer process exited with status: {}", status));
-                }
-                None => {}
-            }
-        }
-            
-            // Here you would typically check the database or API to see current sync status
-            // For now, we'll just wait and assume it's working
-            sleep(Duration::from_millis(200)).await;
-            
-            if start_time.elapsed() >= timeout {
-                return Err(anyhow::anyhow!("Timeout waiting for sync to block {}", target_block));
-            }
-        }
-        
-        info!("Rindexer sync completed to block {}", target_block);
+        self.process = Some(child);
         Ok(())
     }
+
+    /// Start the GraphQL service
+    pub async fn start_graphql(&mut self) -> Result<()> {
+        info!("Starting Rindexer GraphQL service from project: {:?}", self.project_path);
+        
+        let mut cmd = TokioCommand::new(&self.binary_path);
+        cmd.current_dir(&self.project_path)
+           .arg("start")
+           .arg("graphql")
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+        
+        let mut child = cmd.spawn()
+            .context("Failed to start Rindexer GraphQL")?;
+        
+        // Wait for GraphQL to start
+        sleep(Duration::from_millis(1000)).await;
+        
+        // Check if process is still running
+        match child.try_wait()? {
+            Some(status) => {
+                if status.success() {
+                    info!("Rindexer GraphQL completed successfully");
+                } else {
+                    return Err(anyhow::anyhow!("Rindexer GraphQL exited with error status: {}", status));
+                }
+            }
+            None => {
+                info!("Rindexer GraphQL process started successfully and is still running");
+            }
+        }
+        
+        self.process = Some(child);
+        Ok(())
+    }
+
+    /// Start both indexer and GraphQL services
+    pub async fn start_all(&mut self) -> Result<()> {
+        info!("Starting Rindexer all services from project: {:?}", self.project_path);
+        
+        let mut cmd = TokioCommand::new(&self.binary_path);
+        cmd.current_dir(&self.project_path)
+           .arg("start")
+           .arg("all")
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+        
+        let mut child = cmd.spawn()
+            .context("Failed to start Rindexer all services")?;
+        
+        // Start log streaming for Rindexer with completion detection
+        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone()).await;
+        
+        // Wait for Rindexer to start
+        sleep(Duration::from_millis(1000)).await;
+        
+        // Check if process is still running
+        match child.try_wait()? {
+            Some(status) => {
+                if status.success() {
+                    info!("Rindexer all services completed successfully");
+                } else {
+                    return Err(anyhow::anyhow!("Rindexer all services exited with error status: {}", status));
+                }
+            }
+            None => {
+                info!("Rindexer all services process started successfully and is still running");
+            }
+        }
+        
+        self.process = Some(child);
+        Ok(())
+    }
+
+    /// Create a new Rindexer project
+    pub async fn new_project(&self, project_type: &str, path: Option<PathBuf>) -> Result<std::process::Output> {
+        info!("Creating new Rindexer {} project", project_type);
+        let command = RindexerCommand::New { 
+            project_type: project_type.to_string(), 
+            path 
+        };
+        self.execute_command(command).await
+    }
+
+    /// Add a contract to the project
+    pub async fn add_contract(&self, path: Option<PathBuf>) -> Result<std::process::Output> {
+        info!("Adding contract to Rindexer project");
+        let command = RindexerCommand::Add { 
+            element: "contract".to_string(), 
+            path 
+        };
+        self.execute_command(command).await
+    }
+
+    /// Generate code based on the project
+    pub async fn codegen(&self, path: Option<PathBuf>) -> Result<std::process::Output> {
+        info!("Generating code for Rindexer project");
+        let command = RindexerCommand::Codegen { path };
+        self.execute_command(command).await
+    }
+
+    /// Delete data from the project
+    pub async fn delete_data(&self, path: Option<PathBuf>) -> Result<std::process::Output> {
+        info!("Deleting data from Rindexer project");
+        let command = RindexerCommand::Delete { path };
+        self.execute_command(command).await
+    }
+
+    /// Use phantom events
+    pub async fn phantom_events(&self, path: Option<PathBuf>) -> Result<std::process::Output> {
+        info!("Using phantom events for Rindexer project");
+        let command = RindexerCommand::Phantom { path };
+        self.execute_command(command).await
+    }
     
+    /// Check if the Rindexer process is currently running
+    pub fn is_running(&self) -> bool {
+        if let Some(_process) = &self.process {
+            // We can't call try_wait() here because it requires &mut
+            // Just check if the process exists
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Wait for initial sync completion (detected via logs)
     pub async fn wait_for_initial_sync_completion(&mut self, timeout_seconds: u64) -> Result<()> {
         info!("Waiting for Rindexer initial sync completion (timeout: {}s)", timeout_seconds);
         
@@ -157,55 +310,17 @@ impl RindexerInstance {
         Err(anyhow::anyhow!("Timeout waiting for initial sync completion after {}s", timeout_seconds))
     }
     
+    /// Stop the running Rindexer process
     pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
             info!("Stopping Rindexer instance");
             let _ = child.kill();
+            let _ = child.wait().await;
         }
-        
-        if let Some(temp_dir) = self.temp_dir.take() {
-            let _ = temp_dir.close();
-        }
-        
         Ok(())
     }
     
-    pub async fn restart(&mut self, binary_path: &str) -> Result<()> {
-        info!("Restarting Rindexer instance");
-        
-        self.stop().await?;
-        
-        // Read existing config
-        let config_content = std::fs::read_to_string(&self.config_path)?;
-        let _config: RindexerConfig = serde_yaml::from_str(&config_content)?;
-        
-        // Create new temporary directory
-        let temp_dir = TempDir::new()
-            .context("Failed to create temporary directory")?;
-        
-        let config_path = temp_dir.path().join("config.yaml");
-        std::fs::write(&config_path, config_content)?;
-        
-        // Start new process
-        let mut cmd = TokioCommand::new(binary_path);
-        cmd.arg("--config")
-           .arg(&config_path)
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
-        
-        let child = cmd.spawn()
-            .context("Failed to restart Rindexer")?;
-        
-        // Wait for startup
-        sleep(Duration::from_millis(500)).await;
-        
-        self.process = Some(child);
-        self.config_path = config_path.to_string_lossy().to_string();
-        self.temp_dir = Some(temp_dir);
-        
-        Ok(())
-    }
-    
+    /// Start log streaming for a Rindexer process
     async fn start_log_streaming(child: &mut tokio::process::Child) {
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
@@ -230,6 +345,7 @@ impl RindexerInstance {
         }
     }
     
+    /// Start log streaming with completion detection for Rindexer processes
     async fn start_log_streaming_with_completion_detection(child: &mut tokio::process::Child, sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
@@ -270,6 +386,54 @@ impl RindexerInstance {
     }
 }
 
+/// Configuration creation utilities
+impl RindexerInstance {
+    /// Create a minimal Rindexer configuration
+    pub fn create_minimal_config(anvil_rpc_url: &str) -> crate::test_suite::RindexerConfig {
+        crate::test_suite::RindexerConfig {
+            name: "minimal_test".to_string(),
+            project_type: "no-code".to_string(),
+            config: serde_json::json!({}),
+            timestamps: None,
+            networks: vec![
+                crate::test_suite::NetworkConfig {
+                    name: "anvil".to_string(),
+                    chain_id: 31337,
+                    rpc: anvil_rpc_url.to_string(),
+                }
+            ],
+            storage: crate::test_suite::StorageConfig {
+                postgres: crate::test_suite::PostgresConfig { enabled: false },
+                csv: crate::test_suite::CsvConfig { enabled: true },
+            },
+            native_transfers: crate::test_suite::NativeTransfersConfig { enabled: false },
+            contracts: vec![],
+        }
+    }
+    
+    /// Create a configuration with a specific contract
+    pub fn create_contract_config(anvil_rpc_url: &str, contract_address: &str) -> crate::test_suite::RindexerConfig {
+        let mut config = Self::create_minimal_config(anvil_rpc_url);
+        config.name = "contract_test".to_string();
+        config.contracts = vec![
+            crate::test_suite::ContractConfig {
+                name: "SimpleERC20".to_string(),
+                details: vec![
+                    crate::test_suite::ContractDetail {
+                        network: "anvil".to_string(),
+                        address: contract_address.to_string(),
+                        start_block: "0".to_string(),
+                        end_block: None,
+                    }
+                ],
+                abi: Some("./abis/SimpleERC20.abi.json".to_string()),
+                include_events: Some(vec![crate::test_suite::EventConfig { name: "Transfer".to_string() }]),
+            }
+        ];
+        config
+    }
+}
+
 impl Drop for RindexerInstance {
     fn drop(&mut self) {
         if let Some(mut child) = self.process.take() {
@@ -277,10 +441,6 @@ impl Drop for RindexerInstance {
             let _ = child.kill();
             // Note: tokio::process::Child doesn't have wait_timeout, 
             // but the process will be cleaned up when the child is dropped
-        }
-        
-        if let Some(temp_dir) = self.temp_dir.take() {
-            let _ = temp_dir.close();
         }
     }
 }

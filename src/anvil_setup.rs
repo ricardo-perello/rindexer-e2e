@@ -237,6 +237,42 @@ impl AnvilInstance {
     }
 }
 
+impl AnvilInstance {
+    /// Deploy a test contract using forge
+    pub async fn deploy_test_contract(&self) -> Result<String> {
+        info!("Deploying SimpleERC20 test contract...");
+        
+        let output = std::process::Command::new("forge")
+            .args(&[
+                "create",
+                "--rpc-url", &self.rpc_url,
+                "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                "--broadcast",
+                "contracts/SimpleERC20.sol:SimpleERC20"
+            ])
+            .output()
+            .context("Failed to run forge command")?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Contract deployment failed: {}", stderr));
+        }
+        
+        // Parse the contract address from forge output
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let address_line = stdout.lines()
+            .find(|line| line.contains("Deployed to:"))
+            .ok_or_else(|| anyhow::anyhow!("Could not find contract address in forge output"))?;
+        
+        let address = address_line.split_whitespace()
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("Could not parse contract address"))?;
+        
+        info!("Test contract deployed at: {}", address);
+        Ok(address.to_string())
+    }
+}
+
 impl Drop for AnvilInstance {
     fn drop(&mut self) {
         if let Some(mut child) = self.process.take() {

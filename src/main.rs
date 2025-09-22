@@ -8,7 +8,7 @@ mod test_suite;
 mod tests;
 mod health_client;
 
-use tests::run_test_suite;
+use tests::run_tests;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     // Run the test suite (it manages its own Anvil instances)
     let test_names = args.tests.map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
     
-    match run_test_suite(args.rindexer_binary, test_names).await {
+    match run_tests(args.rindexer_binary, test_names).await {
         Ok(results) => {
             info!("Test suite completed");
             let mut passed = 0;

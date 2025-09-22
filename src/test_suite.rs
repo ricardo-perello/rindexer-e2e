@@ -45,10 +45,31 @@ pub struct CsvConfig {
 pub struct NativeTransfersConfig {
     pub enabled: bool,
 }
-use crate::rindexer_client::{ContractConfig, ContractDetail, EventConfig};
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ContractConfig {
+    pub name: String,
+    pub details: Vec<ContractDetail>,
+    pub abi: Option<String>,
+    pub include_events: Option<Vec<EventConfig>>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ContractDetail {
+    pub network: String,
+    pub address: String,
+    pub start_block: String,
+    pub end_block: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EventConfig {
+    pub name: String,
+}
 use crate::health_client::HealthClient;
 
-pub struct TestSuite {
+/// Shared context for all tests - provides common infrastructure
+pub struct TestContext {
     pub anvil: AnvilInstance,
     pub rindexer: Option<RindexerInstance>,
     pub test_contract_address: Option<String>,
@@ -58,9 +79,12 @@ pub struct TestSuite {
     pub health_client: Option<HealthClient>,
 }
 
-impl TestSuite {
+// Keep TestSuite as an alias for backward compatibility during transition
+pub type TestSuite = TestContext;
+
+impl TestContext {
     pub async fn new(rindexer_binary: String) -> Result<Self> {
-        info!("Setting up fresh test suite...");
+        info!("Setting up fresh test context...");
         
         // Kill any existing Anvil processes and start fresh
         info!("Killing any existing Anvil processes...");
@@ -116,83 +140,21 @@ impl TestSuite {
         Ok(())
     }
     
+    /// Deploy a test contract using the Anvil instance
     pub async fn deploy_test_contract(&mut self) -> Result<String> {
-        info!("Deploying test contract...");
-        
-        // Deploy the SimpleERC20 contract
-        let output = std::process::Command::new("forge")
-            .args(&[
-                "create",
-                "--rpc-url", &self.anvil.rpc_url,
-                "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-                "--broadcast",
-                "contracts/SimpleERC20.sol:SimpleERC20"
-            ])
-            .output()
-            .context("Failed to run forge command")?;
-        
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Contract deployment failed: {}", stderr));
-        }
-        
-        // Parse the contract address from forge output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let address_line = stdout.lines()
-            .find(|line| line.contains("Deployed to:"))
-            .ok_or_else(|| anyhow::anyhow!("Could not find contract address in forge output"))?;
-        
-        let address = address_line.split_whitespace()
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("Could not parse contract address"))?;
-        
-        self.test_contract_address = Some(address.to_string());
-        info!("Test contract deployed at: {}", address);
-        
-        Ok(address.to_string())
+        let address = self.anvil.deploy_test_contract().await?;
+        self.test_contract_address = Some(address.clone());
+        Ok(address)
     }
     
+    /// Create a minimal Rindexer configuration
     pub fn create_minimal_config(&self) -> RindexerConfig {
-        RindexerConfig {
-            name: "minimal_test".to_string(),
-            project_type: "no-code".to_string(),
-            config: serde_json::json!({}),
-            timestamps: None,
-            networks: vec![
-                NetworkConfig {
-                    name: "anvil".to_string(),
-                    chain_id: 31337,
-                    rpc: self.anvil.rpc_url.clone(),
-                }
-            ],
-            storage: StorageConfig {
-                postgres: PostgresConfig { enabled: false },
-                csv: CsvConfig { enabled: true },
-            },
-            native_transfers: NativeTransfersConfig { enabled: false },
-            contracts: vec![],
-        }
+        crate::rindexer_client::RindexerInstance::create_minimal_config(&self.anvil.rpc_url)
     }
     
+    /// Create a configuration with a specific contract
     pub fn create_contract_config(&self, contract_address: &str) -> RindexerConfig {
-        let mut config = self.create_minimal_config();
-        config.name = "contract_test".to_string();
-        config.contracts = vec![
-            ContractConfig {
-                name: "SimpleERC20".to_string(),
-                details: vec![
-                    ContractDetail {
-                        network: "anvil".to_string(),
-                        address: contract_address.to_string(),
-                        start_block: "0".to_string(),
-                        end_block: None,
-                    }
-                ],
-                abi: Some("./abis/SimpleERC20.abi.json".to_string()),
-                include_events: Some(vec![EventConfig { name: "Transfer".to_string() }]),
-            }
-        ];
-        config
+        crate::rindexer_client::RindexerInstance::create_contract_config(&self.anvil.rpc_url, contract_address)
     }
     
     pub async fn start_rindexer(&mut self, config: RindexerConfig) -> Result<()> {
@@ -214,9 +176,11 @@ impl TestSuite {
         
         info!("Created Rindexer project at: {:?}", self.project_path);
         
-        // Start Rindexer (the new method already starts the process)
-        let rindexer = RindexerInstance::new(&self.rindexer_binary, self.project_path.clone()).await
-            .context("Failed to create and start Rindexer instance")?;
+        // Create Rindexer instance and start indexer
+        let mut rindexer = RindexerInstance::new(&self.rindexer_binary, self.project_path.clone());
+        
+        rindexer.start_indexer().await
+            .context("Failed to start Rindexer indexer")?;
         
         self.rindexer = Some(rindexer);
         info!("Rindexer started successfully");
@@ -224,62 +188,55 @@ impl TestSuite {
         Ok(())
     }
     
-    pub async fn wait_for_rindexer_ready(&mut self, timeout_seconds: u64) -> Result<()> {
-        // First, wait for Rindexer to start up
+    /// Wait for Rindexer sync completion based on log output
+    pub async fn wait_for_sync_completion(&mut self, timeout_seconds: u64) -> Result<()> {
         if let Some(rindexer) = &mut self.rindexer {
             rindexer.wait_for_initial_sync_completion(timeout_seconds).await?;
+            info!("✓ Rindexer sync completed (detected via logs)");
         }
-        
-        // Then use health endpoint to verify it's ready
+        Ok(())
+    }
+    
+    /// Wait for Rindexer health endpoint to be ready
+    pub async fn wait_for_health_ready(&mut self, timeout_seconds: u64) -> Result<()> {
         if let Some(health_client) = &self.health_client {
-            // Give health endpoint a moment to become available
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             
             match health_client.wait_for_healthy(timeout_seconds).await {
-                Ok(_) => {
-                    info!("✓ Rindexer health endpoint confirms readiness");
-                }
+                Ok(_) => info!("✓ Rindexer health endpoint confirms readiness"),
                 Err(e) => {
                     warn!("Health endpoint not available, falling back to process check: {}", e);
-                    // Fallback to process check if health endpoint is not available
                     if !self.is_rindexer_running() {
                         return Err(anyhow::anyhow!("Rindexer process is not running"));
                     }
                 }
             }
         }
-        
         Ok(())
     }
     
-    pub fn get_csv_output_path(&self) -> PathBuf {
-        self.project_path.join("generated_csv")
-    }
-    
+    /// Wait for indexing to complete (health endpoint if available, otherwise logs)
     pub async fn wait_for_indexing_complete(&mut self, timeout_seconds: u64) -> Result<()> {
         if let Some(health_client) = &self.health_client {
             info!("Waiting for indexing to complete using health endpoint...");
             health_client.wait_for_indexing_complete(timeout_seconds).await?;
             info!("✓ Indexing completed according to health endpoint");
         } else {
-            // Fallback to log-based detection
-            if let Some(rindexer) = &mut self.rindexer {
-                rindexer.wait_for_initial_sync_completion(timeout_seconds).await?;
-            }
+            self.wait_for_sync_completion(timeout_seconds).await?;
         }
         Ok(())
+    }
+    
+    pub fn get_csv_output_path(&self) -> PathBuf {
+        self.project_path.join("generated_csv")
     }
 
     pub fn is_rindexer_running(&self) -> bool {
         if let Some(rindexer) = &self.rindexer {
-            if let Some(_process) = &rindexer.process {
-                // Process exists, assume it's running
-                // Note: We can't call try_wait() here because it requires &mut
-                // The process will be checked properly in the RindexerInstance methods
-                return true;
-            }
+            rindexer.is_running()
+        } else {
+            false
         }
-        false
     }
 }
 
