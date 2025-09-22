@@ -1,4 +1,5 @@
 pub mod anvil_setup;
+pub mod health_client;
 pub mod rindexer_client;
 pub mod test_flows;
 pub mod test_runner;
@@ -6,7 +7,7 @@ pub mod test_suite;
 pub mod tests;
 
 #[cfg(test)]
-mod tests {
+mod integration_tests {
     use super::*;
     
     #[test]
@@ -18,8 +19,7 @@ mod tests {
     
     #[test]
     fn test_rindexer_config_serialization() {
-        use rindexer_client::ContractConfig;
-        use rindexer_client::ContractDetail;
+        use rindexer_client::{ContractConfig, ContractDetail, EventConfig};
        
         
         let config = ContractConfig {
@@ -33,7 +33,9 @@ mod tests {
                 }
             ],
             abi: None,
-            include_events: Some(vec!["Transfer".to_string()]),
+            include_events: Some(vec![EventConfig {
+                name: "Transfer".to_string(),
+            }]),
         };
         
         

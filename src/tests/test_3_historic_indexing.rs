@@ -28,8 +28,8 @@ impl TestCaseImpl for HistoricIndexingTest {
         // Start Rindexer with contract config
         test_suite.start_rindexer(config).await?;
         
-        // Wait for Rindexer to complete historic indexing
-        test_suite.wait_for_rindexer_ready(20).await?;
+        // Wait for Rindexer to complete historic indexing using health endpoint
+        test_suite.wait_for_indexing_complete(20).await?;
         
         // Verify CSV file was created and contains the deployment Transfer event
         let csv_path = test_suite.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");

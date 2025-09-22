@@ -8,6 +8,7 @@ mod rindexer_client;
 mod test_flows;
 mod test_suite;
 mod tests;
+mod health_client;
 
 use test_runner::TestRunner;
 use anvil_setup::AnvilInstance;
@@ -17,7 +18,7 @@ use tests::run_test_suite;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to the Rindexer binary
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "../rindexer/target/debug/rindexer_cli")]
     rindexer_binary: String,
     
     /// Test configuration directory

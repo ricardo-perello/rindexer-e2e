@@ -36,8 +36,8 @@ impl TestCaseImpl for SingleTransferTest {
         // Start Rindexer with contract config
         test_suite.start_rindexer(config).await?;
         
-        // Wait for Rindexer to complete historic indexing
-        test_suite.wait_for_rindexer_ready(20).await?;
+        // Wait for Rindexer to complete historic indexing using health endpoint
+        test_suite.wait_for_indexing_complete(20).await?;
         
         // Get initial CSV state
         let csv_path = test_suite.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");
@@ -55,8 +55,8 @@ impl TestCaseImpl for SingleTransferTest {
         
         info!("Transfer transaction sent: tx_hash={:?}, block={}", tx_hash, block_number);
         
-        // Wait for Rindexer to index the new event
-        test_suite.wait_for_rindexer_ready(15).await?;
+        // Wait for Rindexer to index the new event using health endpoint
+        test_suite.wait_for_indexing_complete(15).await?;
         
         // For now, just verify that the deployment transfer was indexed correctly
         let final_content = fs::read_to_string(&csv_path)?;

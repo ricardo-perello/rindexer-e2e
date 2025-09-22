@@ -1,5 +1,5 @@
 use anyhow::{Result, Context};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -7,6 +7,7 @@ use crate::anvil_setup::AnvilInstance;
 use crate::rindexer_client::RindexerInstance;
 use crate::test_runner::{RindexerConfig, NetworkConfig, StorageConfig, PostgresConfig, CsvConfig, NativeTransfersConfig};
 use crate::rindexer_client::{ContractConfig, ContractDetail, EventConfig};
+use crate::health_client::HealthClient;
 
 pub struct TestSuite {
     pub anvil: AnvilInstance,
@@ -15,6 +16,7 @@ pub struct TestSuite {
     pub temp_dir: Option<TempDir>,
     pub project_path: PathBuf,
     pub rindexer_binary: String,
+    pub health_client: Option<HealthClient>,
 }
 
 impl TestSuite {
@@ -52,6 +54,7 @@ impl TestSuite {
             temp_dir: Some(temp_dir),
             project_path,
             rindexer_binary,
+            health_client: Some(HealthClient::new(8080)), // Default health port
         })
     }
     
@@ -183,10 +186,30 @@ impl TestSuite {
     }
     
     pub async fn wait_for_rindexer_ready(&mut self, timeout_seconds: u64) -> Result<()> {
+        // First, wait for Rindexer to start up
         if let Some(rindexer) = &mut self.rindexer {
-            // Use the new log-based sync completion detection
             rindexer.wait_for_initial_sync_completion(timeout_seconds).await?;
         }
+        
+        // Then use health endpoint to verify it's ready
+        if let Some(health_client) = &self.health_client {
+            // Give health endpoint a moment to become available
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            
+            match health_client.wait_for_healthy(timeout_seconds).await {
+                Ok(_) => {
+                    info!("✓ Rindexer health endpoint confirms readiness");
+                }
+                Err(e) => {
+                    warn!("Health endpoint not available, falling back to process check: {}", e);
+                    // Fallback to process check if health endpoint is not available
+                    if !self.is_rindexer_running() {
+                        return Err(anyhow::anyhow!("Rindexer process is not running"));
+                    }
+                }
+            }
+        }
+        
         Ok(())
     }
     
@@ -194,6 +217,20 @@ impl TestSuite {
         self.project_path.join("generated_csv")
     }
     
+    pub async fn wait_for_indexing_complete(&mut self, timeout_seconds: u64) -> Result<()> {
+        if let Some(health_client) = &self.health_client {
+            info!("Waiting for indexing to complete using health endpoint...");
+            health_client.wait_for_indexing_complete(timeout_seconds).await?;
+            info!("✓ Indexing completed according to health endpoint");
+        } else {
+            // Fallback to log-based detection
+            if let Some(rindexer) = &mut self.rindexer {
+                rindexer.wait_for_initial_sync_completion(timeout_seconds).await?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn is_rindexer_running(&self) -> bool {
         if let Some(rindexer) = &self.rindexer {
             if let Some(_process) = &rindexer.process {

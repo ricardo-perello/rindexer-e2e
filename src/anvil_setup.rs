@@ -13,6 +13,56 @@ pub struct AnvilInstance {
 }
 
 impl AnvilInstance {
+    pub async fn start_forked() -> Result<Self> {
+        info!("Starting Anvil forked from Ethereum mainnet");
+        
+        let mut cmd = TokioCommand::new("anvil");
+        cmd.arg("--fork-url")
+           .arg("https://eth-mainnet.g.alchemy.com/v2/JQceHZ-KHeV8btdy7ACh_")
+           .arg("--chain-id")
+           .arg("31337")
+           .arg("--accounts")
+           .arg("10")
+           .arg("--balance")
+           .arg("10000")
+           .arg("--gas-limit")
+           .arg("30000000")
+           .arg("--gas-price")
+           .arg("1000000000")
+           .arg("--block-time")
+           .arg("1")
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+        
+        let mut child = cmd.spawn()
+            .context("Failed to start forked Anvil")?;
+        
+        // Start log streaming for Anvil
+        Self::start_log_streaming(&mut child).await;
+        
+        // Wait a bit for Anvil to start
+        sleep(Duration::from_millis(2000)).await;
+        
+        // Check if process is still running
+        match child.try_wait()? {
+            Some(status) => {
+                return Err(anyhow::anyhow!("Forked Anvil exited with status: {}", status));
+            }
+            None => {
+                info!("Forked Anvil process started successfully");
+            }
+        }
+        
+        // Wait for RPC to be ready
+        Self::wait_for_rpc_ready("http://127.0.0.1:8545").await?;
+        
+        Ok(Self {
+            process: Some(child),
+            rpc_url: "http://127.0.0.1:8545".to_string(),
+            ws_url: "ws://127.0.0.1:8545".to_string(),
+        })
+    }
+
     pub async fn start_local(private_key: &str) -> Result<Self> {
         info!("Starting local Anvil instance");
         

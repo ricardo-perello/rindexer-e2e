@@ -3,6 +3,8 @@ pub mod test_2_contract_discovery;
 pub mod test_3_historic_indexing;
 pub mod test_4_single_transfer;
 pub mod test_5_multiple_transfers;
+pub mod test_6_demo_yaml;
+pub mod test_8_forked_anvil;
 
 use anyhow::Result;
 use crate::test_suite::TestSuite;
@@ -13,6 +15,8 @@ pub enum TestCase {
     HistoricIndexing(test_3_historic_indexing::HistoricIndexingTest),
     SingleTransfer(test_4_single_transfer::SingleTransferTest),
     MultipleTransfers(test_5_multiple_transfers::MultipleTransfersTest),
+    DemoYaml(test_6_demo_yaml::DemoYamlTest),
+    ForkedAnvil(test_8_forked_anvil::ForkedAnvilTest),
 }
 
 impl TestCase {
@@ -23,6 +27,8 @@ impl TestCase {
             TestCase::HistoricIndexing(test) => test.name(),
             TestCase::SingleTransfer(test) => test.name(),
             TestCase::MultipleTransfers(test) => test.name(),
+            TestCase::DemoYaml(test) => test.name(),
+            TestCase::ForkedAnvil(test) => test.name(),
         }
     }
     
@@ -33,6 +39,8 @@ impl TestCase {
             TestCase::HistoricIndexing(test) => test.description(),
             TestCase::SingleTransfer(test) => test.description(),
             TestCase::MultipleTransfers(test) => test.description(),
+            TestCase::DemoYaml(test) => test.description(),
+            TestCase::ForkedAnvil(test) => test.description(),
         }
     }
     
@@ -43,6 +51,8 @@ impl TestCase {
             TestCase::HistoricIndexing(test) => test.run(test_suite).await,
             TestCase::SingleTransfer(test) => test.run(test_suite).await,
             TestCase::MultipleTransfers(test) => test.run(test_suite).await,
+            TestCase::DemoYaml(test) => test.run(test_suite).await,
+            TestCase::ForkedAnvil(test) => test.run(test_suite).await,
         }
     }
 }
@@ -70,6 +80,8 @@ pub async fn run_test_suite(rindexer_binary: String, test_names: Option<Vec<Stri
         TestCase::HistoricIndexing(test_3_historic_indexing::HistoricIndexingTest),
         TestCase::SingleTransfer(test_4_single_transfer::SingleTransferTest),
         TestCase::MultipleTransfers(test_5_multiple_transfers::MultipleTransfersTest),
+        TestCase::DemoYaml(test_6_demo_yaml::DemoYamlTest),
+        TestCase::ForkedAnvil(test_8_forked_anvil::ForkedAnvilTest),
     ];
     
     // Filter tests if specific names provided
@@ -83,27 +95,26 @@ pub async fn run_test_suite(rindexer_binary: String, test_names: Option<Vec<Stri
     
     for test in tests_to_run {
         let start_time = std::time::Instant::now();
-        let mut test_suite = TestSuite::new(rindexer_binary.clone()).await?;
         
-        let result = match test.run(&mut test_suite).await {
-            Ok(_) => TestResult {
-                name: test.name().to_string(),
-                passed: true,
-                error: None,
-                duration: start_time.elapsed(),
-            },
-            Err(e) => TestResult {
-                name: test.name().to_string(),
-                passed: false,
-                error: Some(e.to_string()),
-                duration: start_time.elapsed(),
-            },
+        // Create a scope to ensure TestSuite lives for the entire test
+        let result = {
+            let mut test_suite = TestSuite::new(rindexer_binary.clone()).await?;
+            
+            match test.run(&mut test_suite).await {
+                Ok(_) => TestResult {
+                    name: test.name().to_string(),
+                    passed: true,
+                    error: None,
+                    duration: start_time.elapsed(),
+                },
+                Err(e) => TestResult {
+                    name: test.name().to_string(),
+                    passed: false,
+                    error: Some(e.to_string()),
+                    duration: start_time.elapsed(),
+                },
+            }
         };
-        
-        // Cleanup after each test
-        if let Err(e) = test_suite.cleanup().await {
-            tracing::warn!("Cleanup failed for test {}: {}", test.name(), e);
-        }
         
         results.push(result);
     }

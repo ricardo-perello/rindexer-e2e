@@ -37,8 +37,8 @@ impl TestCaseImpl for MultipleTransfersTest {
         // Start Rindexer with contract config
         test_suite.start_rindexer(config).await?;
         
-        // Wait for Rindexer to complete historic indexing
-        test_suite.wait_for_rindexer_ready(20).await?;
+        // Wait for Rindexer to complete historic indexing using health endpoint
+        test_suite.wait_for_indexing_complete(20).await?;
         
         // Get initial CSV state
         let csv_path = test_suite.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");
@@ -55,8 +55,8 @@ impl TestCaseImpl for MultipleTransfersTest {
         // Fix overflow: Use checked arithmetic to prevent overflow
         let _transfer_amounts = vec![1_000_000u64.checked_mul(10u64.pow(18)).unwrap_or(u64::MAX)]; // 1M tokens from deployment
         
-        // Wait for Rindexer to index all new events
-        test_suite.wait_for_rindexer_ready(20).await?;
+        // Wait for Rindexer to index all new events using health endpoint
+        test_suite.wait_for_indexing_complete(20).await?;
         
         // For now, just verify that the deployment transfer was indexed correctly
         let final_content = fs::read_to_string(&csv_path)?;
