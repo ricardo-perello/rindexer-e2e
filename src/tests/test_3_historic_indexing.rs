@@ -29,7 +29,7 @@ impl Test for HistoricIndexingTest {
         context.start_rindexer(config).await?;
         
         // Wait for Rindexer to complete historic indexing using health endpoint
-        context.wait_for_indexing_complete(20).await?;
+        context.wait_for_sync_completion(20).await?;
         
         // Verify CSV file was created and contains the deployment Transfer event
         let csv_path = context.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");

@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::process::Stdio;
 use tokio::time::sleep;
 use anyhow::{Result, Context};
-use tracing::{info, debug, error};
+use tracing::{info, debug, error, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -314,8 +314,36 @@ impl RindexerInstance {
     pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
             info!("Stopping Rindexer instance");
-            let _ = child.kill();
-            let _ = child.wait().await;
+            
+            // First try graceful termination
+            if let Err(e) = child.kill().await {
+                warn!("Failed to kill Rindexer process: {}", e);
+            }
+            
+            // Wait for process to terminate with timeout
+            let timeout = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                child.wait()
+            ).await;
+            
+            match timeout {
+                Ok(Ok(status)) => {
+                    info!("Rindexer process terminated with status: {:?}", status);
+                }
+                Ok(Err(e)) => {
+                    warn!("Error waiting for Rindexer process: {}", e);
+                }
+                Err(_) => {
+                    warn!("Rindexer process did not terminate within 5 seconds");
+                    // Force kill if still running
+                    if let Some(pid) = child.id() {
+                        let _ = std::process::Command::new("kill")
+                            .arg("-9")
+                            .arg(pid.to_string())
+                            .output();
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -439,8 +467,14 @@ impl Drop for RindexerInstance {
         if let Some(mut child) = self.process.take() {
             info!("Shutting down Rindexer instance");
             let _ = child.kill();
-            // Note: tokio::process::Child doesn't have wait_timeout, 
-            // but the process will be cleaned up when the child is dropped
+            
+            // Force kill if we have a PID
+            if let Some(pid) = child.id() {
+                let _ = std::process::Command::new("kill")
+                    .arg("-9")
+                    .arg(pid.to_string())
+                    .output();
+            }
         }
     }
 }
