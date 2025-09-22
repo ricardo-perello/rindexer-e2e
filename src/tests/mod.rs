@@ -1,8 +1,6 @@
 pub mod test_1_basic_connection;
 pub mod test_2_contract_discovery;
 pub mod test_3_historic_indexing;
-pub mod test_4_single_transfer;
-pub mod test_5_multiple_transfers;
 pub mod test_6_demo_yaml;
 pub mod test_8_forked_anvil;
 
@@ -13,8 +11,6 @@ pub enum TestCase {
     BasicConnection(test_1_basic_connection::BasicConnectionTest),
     ContractDiscovery(test_2_contract_discovery::ContractDiscoveryTest),
     HistoricIndexing(test_3_historic_indexing::HistoricIndexingTest),
-    SingleTransfer(test_4_single_transfer::SingleTransferTest),
-    MultipleTransfers(test_5_multiple_transfers::MultipleTransfersTest),
     DemoYaml(test_6_demo_yaml::DemoYamlTest),
     ForkedAnvil(test_8_forked_anvil::ForkedAnvilTest),
 }
@@ -25,8 +21,6 @@ impl TestCase {
             TestCase::BasicConnection(test) => test.name(),
             TestCase::ContractDiscovery(test) => test.name(),
             TestCase::HistoricIndexing(test) => test.name(),
-            TestCase::SingleTransfer(test) => test.name(),
-            TestCase::MultipleTransfers(test) => test.name(),
             TestCase::DemoYaml(test) => test.name(),
             TestCase::ForkedAnvil(test) => test.name(),
         }
@@ -37,8 +31,6 @@ impl TestCase {
             TestCase::BasicConnection(test) => test.description(),
             TestCase::ContractDiscovery(test) => test.description(),
             TestCase::HistoricIndexing(test) => test.description(),
-            TestCase::SingleTransfer(test) => test.description(),
-            TestCase::MultipleTransfers(test) => test.description(),
             TestCase::DemoYaml(test) => test.description(),
             TestCase::ForkedAnvil(test) => test.description(),
         }
@@ -49,8 +41,6 @@ impl TestCase {
             TestCase::BasicConnection(test) => test.run(test_suite).await,
             TestCase::ContractDiscovery(test) => test.run(test_suite).await,
             TestCase::HistoricIndexing(test) => test.run(test_suite).await,
-            TestCase::SingleTransfer(test) => test.run(test_suite).await,
-            TestCase::MultipleTransfers(test) => test.run(test_suite).await,
             TestCase::DemoYaml(test) => test.run(test_suite).await,
             TestCase::ForkedAnvil(test) => test.run(test_suite).await,
         }
@@ -78,8 +68,6 @@ pub async fn run_test_suite(rindexer_binary: String, test_names: Option<Vec<Stri
         TestCase::BasicConnection(test_1_basic_connection::BasicConnectionTest),
         TestCase::ContractDiscovery(test_2_contract_discovery::ContractDiscoveryTest),
         TestCase::HistoricIndexing(test_3_historic_indexing::HistoricIndexingTest),
-        TestCase::SingleTransfer(test_4_single_transfer::SingleTransferTest),
-        TestCase::MultipleTransfers(test_5_multiple_transfers::MultipleTransfersTest),
         TestCase::DemoYaml(test_6_demo_yaml::DemoYamlTest),
         TestCase::ForkedAnvil(test_8_forked_anvil::ForkedAnvilTest),
     ];

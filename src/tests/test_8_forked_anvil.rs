@@ -85,7 +85,7 @@ impl TestCaseImpl for ForkedAnvilTest {
                         return Err(anyhow::anyhow!("Health endpoint reports unhealthy status: {}", health.status));
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     info!("Health endpoint not ready yet, waiting...");
                     // Wait a bit more and try again
                     sleep(Duration::from_secs(10)).await;

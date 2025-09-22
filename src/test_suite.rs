@@ -5,7 +5,46 @@ use tempfile::TempDir;
 
 use crate::anvil_setup::AnvilInstance;
 use crate::rindexer_client::RindexerInstance;
-use crate::test_runner::{RindexerConfig, NetworkConfig, StorageConfig, PostgresConfig, CsvConfig, NativeTransfersConfig};
+// Config structs for Rindexer
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct RindexerConfig {
+    pub name: String,
+    pub project_type: String,
+    pub config: serde_json::Value,
+    pub timestamps: Option<serde_json::Value>,
+    pub networks: Vec<NetworkConfig>,
+    pub storage: StorageConfig,
+    pub native_transfers: NativeTransfersConfig,
+    pub contracts: Vec<ContractConfig>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct NetworkConfig {
+    pub name: String,
+    pub chain_id: u64,
+    pub rpc: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct StorageConfig {
+    pub postgres: PostgresConfig,
+    pub csv: CsvConfig,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PostgresConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CsvConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct NativeTransfersConfig {
+    pub enabled: bool,
+}
 use crate::rindexer_client::{ContractConfig, ContractDetail, EventConfig};
 use crate::health_client::HealthClient;
 
