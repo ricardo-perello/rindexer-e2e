@@ -79,11 +79,10 @@ pub struct TestContext {
     pub health_client: Option<HealthClient>,
 }
 
-// Keep TestSuite as an alias for backward compatibility during transition
-pub type TestSuite = TestContext;
+// TestSuite is now a separate struct for test results
 
 impl TestContext {
-    pub async fn new(rindexer_binary: String) -> Result<Self> {
+    pub async fn new(rindexer_binary: String, anvil_port: u16, health_port: u16) -> Result<Self> {
         info!("Setting up fresh test context...");
         
         // Kill any existing Anvil processes and start fresh
@@ -94,7 +93,7 @@ impl TestContext {
             .output();
         
         // Wait for processes to be killed and port to be free
-        wait_for_port_free(8545, 10).await?;
+        wait_for_port_free(anvil_port, 10).await?;
         
         // Start a fresh Anvil instance
         let anvil = AnvilInstance::start_local("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80").await
@@ -117,7 +116,7 @@ impl TestContext {
             temp_dir: Some(temp_dir),
             project_path,
             rindexer_binary,
-            health_client: Some(HealthClient::new(8080)), // Default health port
+            health_client: Some(HealthClient::new(health_port)),
         })
     }
     
@@ -237,6 +236,63 @@ impl TestContext {
         } else {
             false
         }
+    }
+
+    /// Wait for new events to appear in CSV output (for live indexing tests)
+    pub async fn wait_for_new_events(&self, expected_min_events: usize, timeout_seconds: u64) -> Result<usize> {
+        let csv_path = self.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");
+        
+        if !csv_path.exists() {
+            return Err(anyhow::anyhow!("CSV file does not exist yet: {:?}", csv_path));
+        }
+
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_seconds);
+
+        while start_time.elapsed() < timeout {
+            if let Ok(content) = std::fs::read_to_string(&csv_path) {
+                let lines: Vec<&str> = content.lines().collect();
+                let event_count = if lines.len() > 1 { lines.len() - 1 } else { 0 }; // Subtract header
+
+                if event_count >= expected_min_events {
+                    info!("✓ Found {} events (expected at least {})", event_count, expected_min_events);
+                    return Ok(event_count);
+                }
+
+                info!("Waiting for events: found {} of {} expected", event_count, expected_min_events);
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        Err(anyhow::anyhow!("Timeout waiting for {} events after {}s", expected_min_events, timeout_seconds))
+    }
+
+    /// Get the current number of events in CSV output
+    pub fn get_event_count(&self) -> Result<usize> {
+        let csv_path = self.get_csv_output_path().join("SimpleERC20").join("simpleerc20-transfer.csv");
+        
+        if !csv_path.exists() {
+            return Ok(0);
+        }
+
+        let content = std::fs::read_to_string(&csv_path)?;
+        let lines: Vec<&str> = content.lines().collect();
+        Ok(if lines.len() > 1 { lines.len() - 1 } else { 0 }) // Subtract header
+    }
+
+    /// Wait for Rindexer to be ready for live indexing (health check)
+    pub async fn wait_for_live_indexing_ready(&self, timeout_seconds: u64) -> Result<()> {
+        if let Some(health_client) = &self.health_client {
+            health_client.wait_for_healthy(timeout_seconds).await?;
+            info!("✓ Rindexer is ready for live indexing");
+        } else {
+            // Fallback to basic process check
+            if !self.is_rindexer_running() {
+                return Err(anyhow::anyhow!("Rindexer process is not running"));
+            }
+        }
+        Ok(())
     }
 }
 

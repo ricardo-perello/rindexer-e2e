@@ -1,24 +1,30 @@
 use anyhow::Result;
 use tracing::info;
 use std::fs;
+use std::pin::Pin;
+use std::future::Future;
+
 use crate::test_suite::TestContext;
-use crate::tests::Test;
+use crate::tests::registry::{TestDefinition, TestModule};
 
-pub struct HistoricIndexingTest;
+pub struct HistoricIndexingTests;
 
-impl Test for HistoricIndexingTest {
-    fn name(&self) -> &str {
-        "test_3_historic_indexing"
+impl TestModule for HistoricIndexingTests {
+    fn get_tests() -> Vec<TestDefinition> {
+        vec![
+            TestDefinition::new(
+                "test_3_historic_indexing",
+                "Test Rindexer can index historic events from contract deployment",
+                historic_indexing_test,
+            ).with_timeout(150),
+        ]
     }
-    
-    fn description(&self) -> &str {
-        "Test Rindexer can index historic events from contract deployment"
-    }
-    
-    async fn run(&self, context: &mut TestContext) -> Result<()> {
+}
+
+fn historic_indexing_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+    Box::pin(async move {
         info!("Running Test 3: Historic Indexing Test");
-        info!("Description: {}", self.description());
-        
+    
         // Deploy test contract (this creates a Transfer event)
         let contract_address = context.deploy_test_contract().await?;
         
@@ -60,5 +66,5 @@ impl Test for HistoricIndexingTest {
         info!("CSV contains {} lines", lines.len());
         
         Ok(())
-    }
+    })
 }

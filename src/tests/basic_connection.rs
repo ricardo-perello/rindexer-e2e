@@ -1,24 +1,28 @@
 use anyhow::Result;
 use tracing::info;
+use std::pin::Pin;
+use std::future::Future;
+
 use crate::test_suite::TestContext;
-use crate::tests::Test;
+use crate::tests::registry::{TestDefinition, TestModule};
 
-pub struct BasicConnectionTest;
+pub struct BasicConnectionTests;
 
-impl Test for BasicConnectionTest {
-    fn name(&self) -> &str {
-        "test_1_basic_connection"
+impl TestModule for BasicConnectionTests {
+    fn get_tests() -> Vec<TestDefinition> {
+        vec![
+            TestDefinition::new(
+                "test_1_basic_connection",
+                "Test basic Rindexer connection to Anvil with minimal configuration",
+                basic_connection_test,
+            ).with_timeout(60),
+        ]
     }
-    
-    fn description(&self) -> &str {
-        "Test basic Rindexer connection to Anvil with minimal configuration"
-    }
-    
-    // No custom setup needed - uses default (empty)
-    
-    async fn run(&self, context: &mut TestContext) -> Result<()> {
+}
+
+fn basic_connection_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+    Box::pin(async move {
         info!("Running Test 1: Basic Connection Test");
-        info!("Description: {}", self.description());
         
         // Create minimal configuration (just network, no contracts)
         let config = context.create_minimal_config();
@@ -36,7 +40,5 @@ impl Test for BasicConnectionTest {
         
         info!("✓ Test 1 PASSED: Rindexer connected successfully with minimal config");
         Ok(())
-    }
-    
-    // No custom teardown needed - uses default (empty)
+    })
 }

@@ -1,22 +1,28 @@
 use anyhow::Result;
 use tracing::info;
+use std::pin::Pin;
+use std::future::Future;
+
 use crate::test_suite::TestContext;
-use crate::tests::Test;
+use crate::tests::registry::{TestDefinition, TestModule};
 
-pub struct ContractDiscoveryTest;
+pub struct ContractDiscoveryTests;
 
-impl Test for ContractDiscoveryTest {
-    fn name(&self) -> &str {
-        "test_2_contract_discovery"
+impl TestModule for ContractDiscoveryTests {
+    fn get_tests() -> Vec<TestDefinition> {
+        vec![
+            TestDefinition::new(
+                "test_2_contract_discovery",
+                "Test Rindexer can discover and register contract events from ABI",
+                contract_discovery_test,
+            ).with_timeout(120),
+        ]
     }
-    
-    fn description(&self) -> &str {
-        "Test Rindexer can discover and register contract events from ABI"
-    }
-    
-    async fn run(&self, context: &mut TestContext) -> Result<()> {
+}
+
+fn contract_discovery_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+    Box::pin(async move {
         info!("Running Test 2: Contract Discovery Test");
-        info!("Description: {}", self.description());
         
         // Deploy test contract
         let contract_address = context.deploy_test_contract().await?;
@@ -43,5 +49,5 @@ impl Test for ContractDiscoveryTest {
         
         info!("✓ Test 2 PASSED: Rindexer discovered contract and registered Transfer event");
         Ok(())
-    }
+    })
 }

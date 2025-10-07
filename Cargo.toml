@@ -18,6 +18,7 @@ wait-timeout = "0.2"
 hex = "0.4"
 ethers = { version = "2.0", features = ["ws", "rustls"] }
 eyre = "0.6"
+alloy = { version = "0.7", features = ["full"] }
 [dev-dependencies]
 tokio-test = "0.4"
 

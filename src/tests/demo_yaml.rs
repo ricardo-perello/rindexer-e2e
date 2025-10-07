@@ -1,23 +1,29 @@
 use anyhow::{Result, Context};
 use tracing::info;
+use std::pin::Pin;
+use std::future::Future;
+
 use crate::test_suite::TestContext;
-use crate::tests::Test;
+use crate::tests::registry::{TestDefinition, TestModule};
 
-pub struct DemoYamlTest;
+pub struct DemoYamlTests;
 
-impl Test for DemoYamlTest {
-    fn name(&self) -> &str {
-        "test_6_demo_yaml"
+impl TestModule for DemoYamlTests {
+    fn get_tests() -> Vec<TestDefinition> {
+        vec![
+            TestDefinition::new(
+                "test_6_demo_yaml",
+                "Test Rindexer with the demo YAML configuration adapted for Anvil",
+                demo_yaml_test,
+            ).with_timeout(180),
+        ]
     }
-    
-    fn description(&self) -> &str {
-        "Test Rindexer with the demo YAML configuration adapted for Anvil"
-    }
-    
-    async fn run(&self, context: &mut TestContext) -> Result<()> {
+}
+
+fn demo_yaml_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+    Box::pin(async move {
         info!("Running Test 6: Demo YAML Test");
-        info!("Description: {}", self.description());
-        
+    
         // Copy the anvil demo YAML file to our test project
         let demo_yaml_path = "test_examples/rindexer_demo_cli_anvil/rindexer.yaml";
         let target_yaml_path = context.project_path.join("rindexer.yaml");
@@ -60,5 +66,5 @@ impl Test for DemoYamlTest {
         
         info!("✓ Test 6 PASSED: Rindexer started successfully with demo YAML");
         Ok(())
-    }
+    })
 }
