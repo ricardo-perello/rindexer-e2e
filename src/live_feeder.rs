@@ -126,11 +126,14 @@ impl LiveFeeder {
             })
         };
 
-        // Wait for both tasks to complete (they'll run until stopped)
-        tokio::select! {
-            _ = tx_task => {},
-            _ = mine_task => {},
-        }
+        // Store the task handles so they keep running
+        // We don't need to wait for them, they run in the background
+        tokio::spawn(async move {
+            let _ = tx_task.await;
+        });
+        tokio::spawn(async move {
+            let _ = mine_task.await;
+        });
 
         Ok(())
     }
@@ -156,20 +159,11 @@ impl LiveFeeder {
             .wallet(wallet)
             .on_http(anvil_url.parse()?);
 
-        // Create a simple ETH transfer or contract interaction
-        let tx_request = if let Some(contract_addr) = contract_address {
-            // Contract interaction - call setNumber with tx_counter
-            let call_data = Self::encode_set_number_call(tx_counter);
-            TransactionRequest::default()
-                .to(contract_addr)
-                .input(call_data.into())
-        } else {
-            // Simple ETH transfer to a random address
-            let recipient = Self::generate_test_address(tx_counter);
-            TransactionRequest::default()
-                .to(recipient)
-                .value(U256::from(1000000000000000u64)) // 0.001 ETH
-        };
+        // Create a simple ETH transfer to a random address
+        let recipient = Self::generate_test_address(tx_counter);
+        let tx_request = TransactionRequest::default()
+            .to(recipient)
+            .value(U256::from(1000000000000000u64)); // 0.001 ETH
 
         let pending_tx = provider
             .send_transaction(tx_request)
@@ -184,8 +178,8 @@ impl LiveFeeder {
         let client = reqwest::Client::new();
         let mine_request = serde_json::json!({
             "jsonrpc": "2.0",
-            "method": "anvil_mine",
-            "params": [1],
+            "method": "evm_mine",
+            "params": [],
             "id": 1
         });
 

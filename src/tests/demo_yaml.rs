@@ -24,13 +24,26 @@ fn demo_yaml_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Resu
     Box::pin(async move {
         info!("Running Test 6: Demo YAML Test");
     
-        // Copy the anvil demo YAML file to our test project
+        // Copy and modify the anvil demo YAML file to our test project
         let demo_yaml_path = "test_examples/rindexer_demo_cli_anvil/rindexer.yaml";
         let target_yaml_path = context.project_path.join("rindexer.yaml");
         
         info!("Copying anvil demo YAML from: {}", demo_yaml_path);
-        std::fs::copy(demo_yaml_path, &target_yaml_path)
-            .context("Failed to copy demo YAML file")?;
+        let demo_yaml_content = std::fs::read_to_string(demo_yaml_path)
+            .context("Failed to read demo YAML file")?;
+        
+        // Update the YAML to use our test contract and disable PostgreSQL
+        let updated_yaml = demo_yaml_content
+            .replace("RocketPoolETH", "SimpleERC20")
+            .replace("./abis/RocketTokenRETH.abi.json", "./abis/SimpleERC20.abi.json")
+            .replace("0xae78736cd615f374d3085123a210448e74fc6393", "0x5FbDB2315678afecb367f032d93F642f64180aa3")
+            .replace("18600000", "0")
+            .replace("18600500", "0")  // Set end_block to 0 to match latest block
+            .replace("postgres:\n    enabled: true\n    drop_each_run: true", "postgres:\n    enabled: false")
+            .replace("csv:\n    enabled: false", "csv:\n    enabled: true");
+        
+        std::fs::write(&target_yaml_path, updated_yaml)
+            .context("Failed to write updated YAML file")?;
         
         // Copy the SimpleERC20 ABI file
         let demo_abi_path = "abis/SimpleERC20.abi.json";

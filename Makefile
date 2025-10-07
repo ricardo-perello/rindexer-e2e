@@ -94,7 +94,7 @@ run-tests-live: ## Run only live indexing tests
 	@echo "Running live indexing tests..."
 	@make start-anvil
 	@sleep 3
-	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "test_live_indexing"
+	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "test_live_indexing_basic,test_live_indexing_high_frequency"
 	@make stop-anvil
 
 run-tests-all: ## Run all tests (historical + live)
