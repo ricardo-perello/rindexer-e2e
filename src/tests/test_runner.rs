@@ -1,7 +1,7 @@
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use tracing::{info, error, warn};
+use tracing::info;
 
 use crate::test_suite::TestContext;
 use crate::tests::test_suite::TestSuite;
@@ -66,7 +66,7 @@ impl TestRunner {
         let registry_tests = TestRegistry::get_tests_by_filter(test_names);
 
         if registry_tests.is_empty() {
-            warn!("No tests found matching filter: {:?}", test_names);
+            info!("No tests found matching filter: {:?}", test_names);
             return Ok(suite);
         }
 
@@ -120,6 +120,10 @@ impl TestRunner {
         let mut live_feeder = if test_def.is_live_test {
             info!("Starting live feeder for live indexing test: {}", test_def.name);
             let contract_address = context.deploy_test_contract().await?;
+            
+            // Store the contract address in the context for the test to use
+            context.test_contract_address = Some(contract_address.clone());
+            
             let mut feeder = LiveFeeder::new(
                 context.anvil.rpc_url.clone(),
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),

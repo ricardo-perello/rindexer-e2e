@@ -30,11 +30,12 @@ fn live_indexing_basic_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
     Box::pin(async move {
         info!("Running Live Indexing Test: Basic");
     
-        // Deploy test contract
-        let contract_address = context.deploy_test_contract().await?;
+        // Use the contract address that was already deployed by the test runner
+        let contract_address = context.test_contract_address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No test contract address available"))?;
         
         // Create configuration with contract
-        let config = context.create_contract_config(&contract_address);
+        let config = context.create_contract_config(contract_address);
         
         // Start Rindexer with contract config
         context.start_rindexer(config).await?;
@@ -47,6 +48,10 @@ fn live_indexing_basic_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         info!("Initial event count: {}", initial_events);
         
         // The LiveFeeder is already started by the TestRunner for live tests
+        // Give the LiveFeeder some time to submit transactions
+        info!("Waiting for LiveFeeder to submit transactions...");
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        
         // Wait for new events to be indexed
         let expected_new_events = 1; // Expect at least 1 new event from the feeder
         let final_events = context.wait_for_new_events(expected_new_events, 30).await?;
@@ -71,11 +76,12 @@ fn live_indexing_high_frequency_test(context: &mut TestContext) -> Pin<Box<dyn F
     Box::pin(async move {
         info!("Running Live Indexing Test: High Frequency");
     
-        // Deploy test contract
-        let contract_address = context.deploy_test_contract().await?;
+        // Use the contract address that was already deployed by the test runner
+        let contract_address = context.test_contract_address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No test contract address available"))?;
         
         // Create configuration with contract
-        let config = context.create_contract_config(&contract_address);
+        let config = context.create_contract_config(contract_address);
         
         // Start Rindexer with contract config
         context.start_rindexer(config).await?;

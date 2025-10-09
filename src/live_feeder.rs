@@ -1,9 +1,9 @@
 use anyhow::{Result, Context};
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::watch;
 use tokio::time::interval;
 use tracing::{info, debug, warn};
+use hex;
 use alloy::{
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
@@ -18,7 +18,7 @@ pub struct LiveFeeder {
     contract_address: Option<Address>,
     tx_interval: Duration,
     mine_interval: Duration,
-    stop_tx: Option<mpsc::UnboundedSender<()>>,
+    stop_tx: Option<watch::Sender<bool>>,
 }
 
 impl LiveFeeder {
@@ -50,7 +50,7 @@ impl LiveFeeder {
 
     /// Start the live feeder in the background
     pub async fn start(&mut self) -> Result<()> {
-        let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+        let (stop_tx, stop_rx) = watch::channel(false);
         self.stop_tx = Some(stop_tx);
 
         let anvil_url = self.anvil_url.clone();
@@ -61,13 +61,10 @@ impl LiveFeeder {
 
         info!("Starting live feeder with tx_interval={:?}, mine_interval={:?}", tx_interval, mine_interval);
 
-        // Use Arc<Mutex<Option<UnboundedReceiver>>> to share the receiver
-        let stop_rx = Arc::new(Mutex::new(Some(stop_rx)));
-
         // Spawn transaction submission task
         let tx_task = {
             let anvil_url = anvil_url.clone();
-            let stop_rx = stop_rx.clone();
+            let mut stop_rx = stop_rx.clone();
             tokio::spawn(async move {
                 let mut tx_timer = interval(tx_interval);
                 let mut tx_counter = 0u64;
@@ -82,13 +79,11 @@ impl LiveFeeder {
                                 tx_counter += 1;
                             }
                         }
-                        _ = async {
-                            if let Some(mut rx) = stop_rx.lock().await.take() {
-                                let _ = rx.recv().await;
+                        _ = stop_rx.changed() => {
+                            if *stop_rx.borrow() {
+                                info!("Transaction feeder stopped");
+                                break;
                             }
-                        } => {
-                            info!("Transaction feeder stopped");
-                            break;
                         }
                     }
                 }
@@ -98,7 +93,7 @@ impl LiveFeeder {
         // Spawn mining task
         let mine_task = {
             let anvil_url = anvil_url.clone();
-            let stop_rx = stop_rx.clone();
+            let mut stop_rx = stop_rx.clone();
             tokio::spawn(async move {
                 let mut mine_timer = interval(mine_interval);
                 let mut block_counter = 0u64;
@@ -113,13 +108,11 @@ impl LiveFeeder {
                                 block_counter += 1;
                             }
                         }
-                        _ = async {
-                            if let Some(mut rx) = stop_rx.lock().await.take() {
-                                let _ = rx.recv().await;
+                        _ = stop_rx.changed() => {
+                            if *stop_rx.borrow() {
+                                info!("Mining feeder stopped");
+                                break;
                             }
-                        } => {
-                            info!("Mining feeder stopped");
-                            break;
                         }
                     }
                 }
@@ -141,7 +134,7 @@ impl LiveFeeder {
     /// Stop the live feeder
     pub fn stop(&self) {
         if let Some(stop_tx) = &self.stop_tx {
-            let _ = stop_tx.send(());
+            let _ = stop_tx.send(true);
         }
     }
 
@@ -153,24 +146,63 @@ impl LiveFeeder {
     ) -> Result<()> {
         let signer: PrivateKeySigner = private_key.parse()
             .context("Invalid private key")?;
+        let signer_address = signer.address();
         let wallet = EthereumWallet::from(signer);
 
         let provider = ProviderBuilder::new()
             .wallet(wallet)
             .on_http(anvil_url.parse()?);
 
-        // Create a simple ETH transfer to a random address
-        let recipient = Self::generate_test_address(tx_counter);
-        let tx_request = TransactionRequest::default()
-            .to(recipient)
-            .value(U256::from(1000000000000000u64)); // 0.001 ETH
+        if let Some(contract_addr) = contract_address {
+            // Call the contract's transfer function to emit Transfer events
+            let recipient = Self::generate_test_address(tx_counter);
+            let transfer_amount = U256::from(1000u64); // Transfer 1000 tokens
+            
+            debug!("Attempting contract transfer: to={}, amount={}, contract={}", recipient, transfer_amount, contract_addr);
+            
+            // Encode the transfer(address,uint256) function call
+            let transfer_data = Self::encode_transfer_call(recipient, transfer_amount);
+            debug!("Encoded transfer data: {:?}", hex::encode(&transfer_data));
+            
+            use alloy::rpc::types::TransactionInput;
+            
+            // Get the current nonce for the account
+            let nonce = provider.get_transaction_count(signer_address).await?;
+            
+            let mut tx_request = TransactionRequest::default()
+                .to(contract_addr)
+                .input(TransactionInput::new(transfer_data.clone().into()))
+                .gas_limit(100000u64)
+                .nonce(nonce)
+                .max_fee_per_gas(20000000000u128) // 20 gwei
+                .max_priority_fee_per_gas(1000000000u128); // 1 gwei
+            
+            tx_request.chain_id = Some(31337u64); // Anvil chain ID
 
-        let pending_tx = provider
-            .send_transaction(tx_request)
-            .await
-            .context("Failed to send transaction")?;
+            let pending_tx = match provider.send_transaction(tx_request).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    warn!("Transaction failed with error: {:?}", e);
+                    return Err(e).with_context(|| format!("Failed to send contract transaction to {} with data: {:?}", contract_addr, transfer_data));
+                }
+            };
 
-        debug!("Transaction submitted: {:?}", pending_tx.tx_hash());
+            debug!("Contract transfer transaction submitted: {:?}", pending_tx.tx_hash());
+        } else {
+            // Fallback to ETH transfer if no contract address
+            let recipient = Self::generate_test_address(tx_counter);
+            let tx_request = TransactionRequest::default()
+                .to(recipient)
+                .value(U256::from(1000000000000000u64)); // 0.001 ETH
+
+            let pending_tx = provider
+                .send_transaction(tx_request)
+                .await
+                .context("Failed to send ETH transaction")?;
+
+            debug!("ETH transfer transaction submitted: {:?}", pending_tx.tx_hash());
+        }
+
         Ok(())
     }
 
@@ -200,13 +232,21 @@ impl LiveFeeder {
         Ok(())
     }
 
-    fn encode_set_number_call(value: u64) -> Vec<u8> {
-        // Simple ABI encoding for setNumber(uint256) - this is a simplified version
-        // In a real implementation, you'd use proper ABI encoding
-        let mut data = vec![0x3f, 0xb5, 0xc1, 0xcb]; // setNumber(uint256) function selector
+    fn encode_transfer_call(to: Address, value: U256) -> Vec<u8> {
+        // ABI encoding for transfer(address,uint256)
+        // Function selector: transfer(address,uint256) = 0xa9059cbb
+        let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
+        
+        // Encode address parameter (32 bytes, right-padded)
+        let mut to_bytes = [0u8; 32];
+        to_bytes[12..].copy_from_slice(to.as_slice());
+        data.extend_from_slice(&to_bytes);
+        
+        // Encode uint256 parameter (32 bytes)
         let mut value_bytes = [0u8; 32];
-        value_bytes.copy_from_slice(&U256::from(value).to_be_bytes::<32>());
+        value_bytes.copy_from_slice(&value.to_be_bytes::<32>());
         data.extend_from_slice(&value_bytes);
+        
         data
     }
 
