@@ -70,6 +70,9 @@ impl TestRegistry {
         // Postgres E2E
         tests.extend(crate::tests::postgres_e2e::PostgresE2ETests::get_tests());
 
+        // GraphQL query tests
+        tests.extend(crate::tests::graphql_queries::GraphqlQueriesTests::get_tests());
+
         tests
     }
 

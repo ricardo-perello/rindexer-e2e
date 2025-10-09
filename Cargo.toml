@@ -20,6 +20,7 @@ ethers = { version = "2.0", features = ["ws", "rustls"] }
 eyre = "0.6"
 alloy = { version = "0.7", features = ["full"] }
 tokio-postgres = { version = "0.7", features = ["runtime"] }
+regex = "1.10"
 [dev-dependencies]
 tokio-test = "0.4"
 

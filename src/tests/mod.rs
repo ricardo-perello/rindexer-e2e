@@ -10,6 +10,7 @@ pub mod graphql_start;
 pub mod config_validation;
 pub mod health_assertions;
 pub mod postgres_e2e;
+pub mod graphql_queries;
 
 // Registry and runner
 pub mod registry;

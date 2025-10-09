@@ -10,6 +10,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use std::path::PathBuf;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use regex::Regex;
 
 #[derive(Debug)]
 pub struct RindexerInstance {
@@ -18,6 +20,20 @@ pub struct RindexerInstance {
     pub binary_path: String,
     pub sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub env: HashMap<String, String>,
+    pub graphql_url: Arc<Mutex<Option<String>>>,
+}
+
+impl Clone for RindexerInstance {
+    fn clone(&self) -> Self {
+        Self {
+            process: None, // do not clone running process
+            project_path: self.project_path.clone(),
+            binary_path: self.binary_path.clone(),
+            sync_completed: self.sync_completed.clone(),
+            env: self.env.clone(),
+            graphql_url: self.graphql_url.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +58,7 @@ impl RindexerInstance {
             binary_path: binary_path.to_string(),
             sync_completed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             env: HashMap::new(),
+            graphql_url: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -134,7 +151,7 @@ impl RindexerInstance {
             .context("Client: Failed to start Rindexer indexer")?;
         debug!("Client: Rindexer indexer process started");
         // Start log streaming for Rindexer with completion detection
-        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone()).await;
+        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone(), self.graphql_url.clone()).await;
         debug!("Client: Log streaming started");
         // Wait for Rindexer to start
         sleep(Duration::from_millis(500)).await;
@@ -200,6 +217,8 @@ impl RindexerInstance {
             }
         }
         
+        // Start log streaming as well to capture GraphQL URL from logs
+        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone(), self.graphql_url.clone()).await;
         self.process = Some(child);
         Ok(())
     }
@@ -222,7 +241,7 @@ impl RindexerInstance {
             .context("Failed to start Rindexer all services")?;
         
         // Start log streaming for Rindexer with completion detection
-        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone()).await;
+        Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone(), self.graphql_url.clone()).await;
         
         // Wait for Rindexer to start
         sleep(Duration::from_millis(1000)).await;
@@ -392,11 +411,13 @@ impl RindexerInstance {
     }
     
     /// Start log streaming with completion detection for Rindexer processes
-    async fn start_log_streaming_with_completion_detection(child: &mut tokio::process::Child, sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    async fn start_log_streaming_with_completion_detection(child: &mut tokio::process::Child, sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>, graphql_url: Arc<Mutex<Option<String>>>) {
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             let sync_completed_clone = sync_completed.clone();
+            let graphql_url_clone = graphql_url.clone();
+            let url_regex = Regex::new(r"https?://[^\s]+").ok();
             
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -412,6 +433,19 @@ impl RindexerInstance {
                        line.contains("Historical indexing complete") {
                         info!("[RINDEXER] Detected sync completion: {}", line);
                         sync_completed_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+
+                    // Capture GraphQL URL if present in logs
+                    if (line.contains("GraphQL") || line.contains("graphql") || line.contains("HTTP")) && line.contains("http") {
+                        if let Some(re) = &url_regex {
+                            if let Some(mat) = re.find(&line) {
+                                let url = line[mat.start()..mat.end()].to_string();
+                                let mut guard = graphql_url_clone.lock().unwrap();
+                                if guard.is_none() {
+                                    *guard = Some(url);
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -429,6 +463,23 @@ impl RindexerInstance {
                 }
             });
         }
+    }
+
+    /// Wait for GraphQL URL to be discovered from logs
+    pub async fn wait_for_graphql_url(&self, timeout_seconds: u64) -> Option<String> {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_seconds);
+        loop {
+            if let Some(url) = self.get_graphql_url() {
+                return Some(url);
+            }
+            if start.elapsed() > timeout { return None; }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    pub fn get_graphql_url(&self) -> Option<String> {
+        self.graphql_url.lock().ok().and_then(|g| g.clone())
     }
 }
 
