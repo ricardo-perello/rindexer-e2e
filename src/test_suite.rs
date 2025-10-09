@@ -72,6 +72,7 @@ use crate::health_client::HealthClient;
 pub struct TestContext {
     pub anvil: AnvilInstance,
     pub rindexer: Option<RindexerInstance>,
+    pub graphql: Option<RindexerInstance>,
     pub test_contract_address: Option<String>,
     pub temp_dir: Option<TempDir>,
     pub project_path: PathBuf,
@@ -112,6 +113,7 @@ impl TestContext {
         Ok(Self {
             anvil,
             rindexer: None,
+            graphql: None,
             test_contract_address: None,
             temp_dir: Some(temp_dir),
             project_path,
@@ -127,6 +129,12 @@ impl TestContext {
         if let Some(mut rindexer) = self.rindexer.take() {
             if let Err(e) = rindexer.stop().await {
                 warn!("Error stopping Rindexer: {}", e);
+            }
+        }
+        // Stop GraphQL if running
+        if let Some(mut graphql) = self.graphql.take() {
+            if let Err(e) = graphql.stop().await {
+                warn!("Error stopping GraphQL: {}", e);
             }
         }
         

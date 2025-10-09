@@ -190,8 +190,19 @@ impl RindexerInstance {
     /// Start the GraphQL service
     pub async fn start_graphql(&mut self) -> Result<()> {
         info!("Starting Rindexer GraphQL service from project: {:?}", self.project_path);
-        
-        let mut cmd = TokioCommand::new(&self.binary_path);
+
+        // Resolve binary path like start_indexer
+        let binary_path = if self.binary_path.starts_with("../") {
+            let current_dir = std::env::current_dir()?;
+            current_dir.join(&self.binary_path).canonicalize()?
+        } else {
+            std::path::PathBuf::from(&self.binary_path)
+        };
+        if !binary_path.exists() {
+            return Err(anyhow::anyhow!("Rindexer binary not found at: {}", binary_path.display()));
+        }
+
+        let mut cmd = TokioCommand::new(&binary_path);
         cmd.current_dir(&self.project_path)
            .arg("start")
            .arg("graphql")
@@ -204,22 +215,22 @@ impl RindexerInstance {
         let mut child = cmd.spawn()
             .context("Failed to start Rindexer GraphQL")?;
         
-        // Wait for GraphQL to start
-        sleep(Duration::from_millis(1000)).await;
-        
-        // Check if process is still running
-        match child.try_wait()? {
-            Some(status) => {
-                if status.success() {
-                    info!("Rindexer GraphQL completed successfully");
+        // Wait/poll briefly for startup or immediate failure
+        let start = std::time::Instant::now();
+        let max = Duration::from_secs(3);
+        loop {
+            if start.elapsed() > max { break; }
+            if let Some(status) = child.try_wait()? {
+                if !status.success() {
+                    return Err(anyhow::anyhow!("Rindexer GraphQL exited early with status: {} (see logs above)", status));
                 } else {
-                    return Err(anyhow::anyhow!("Rindexer GraphQL exited with error status: {}", status));
+                    info!("Rindexer GraphQL completed successfully");
+                    break;
                 }
             }
-            None => {
-                info!("Rindexer GraphQL process started successfully and is still running");
-            }
+            sleep(Duration::from_millis(100)).await;
         }
+        info!("Rindexer GraphQL process started successfully and is still running");
         
         // Start log streaming as well to capture GraphQL URL from logs
         Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone(), self.graphql_url.clone()).await;
@@ -230,8 +241,19 @@ impl RindexerInstance {
     /// Start both indexer and GraphQL services
     pub async fn start_all(&mut self) -> Result<()> {
         info!("Starting Rindexer all services from project: {:?}", self.project_path);
-        
-        let mut cmd = TokioCommand::new(&self.binary_path);
+
+        // Resolve binary path like start_indexer
+        let binary_path = if self.binary_path.starts_with("../") {
+            let current_dir = std::env::current_dir()?;
+            current_dir.join(&self.binary_path).canonicalize()?
+        } else {
+            std::path::PathBuf::from(&self.binary_path)
+        };
+        if !binary_path.exists() {
+            return Err(anyhow::anyhow!("Rindexer binary not found at: {}", binary_path.display()));
+        }
+
+        let mut cmd = TokioCommand::new(&binary_path);
         cmd.current_dir(&self.project_path)
            .arg("start")
            .arg("all")
@@ -551,3 +573,4 @@ impl Drop for RindexerInstance {
         }
     }
 }
+

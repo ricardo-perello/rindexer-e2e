@@ -59,28 +59,24 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         let yaml = serde_yaml::to_string(&config)?;
         std::fs::write(&config_path, yaml)?;
 
-        // Start indexer and GraphQL as separate processes with PG env
-        let base_instance = crate::rindexer_client::RindexerInstance::new(&context.rindexer_binary, context.project_path.clone())
+        // Prepare instance with PG env (GraphQL uses the same DB)
+        let mut r = crate::rindexer_client::RindexerInstance::new(&context.rindexer_binary, context.project_path.clone())
             .with_env("POSTGRES_HOST", "localhost")
             .with_env("POSTGRES_PORT", &pg_port.to_string())
             .with_env("POSTGRES_USER", "postgres")
             .with_env("POSTGRES_PASSWORD", "postgres")
             .with_env("POSTGRES_DB", "postgres")
-            .with_env("DATABASE_URL", &format!("postgres://postgres:postgres@localhost:{}/postgres", pg_port));
+            .with_env("DATABASE_URL", &format!("postgres://postgres:postgres@localhost:{}/postgres", pg_port))
+            .with_env("GRAPHQL_PORT", "3001")
+            .with_env("PORT", "3001");
 
-        let mut idx = base_instance.clone();
-        idx.start_indexer().await?;
-        let mut gql = base_instance;
-        // If GraphQL cannot start, soft-skip test
-        if let Err(e) = gql.start_graphql().await {
-            return Err(crate::tests::test_runner::SkipTest(format!("GraphQL failed to start: {}", e)).into());
-        }
-        // Hold onto indexer so logs are processed
-        context.rindexer = Some(idx);
+        // Start ALL services (indexer + GraphQL) in one process
+        r.start_all().await?;
+        context.rindexer = Some(r.clone());
 
-        // Wait for GraphQL URL from logs; fallback to default paths
-        let gql_url = gql.wait_for_graphql_url(10).await
-            .or_else(|| Some("http://localhost:8080/graphql".to_string()))
+        // Wait for GraphQL URL from logs; fallback to default path
+        let gql_url = r.wait_for_graphql_url(15).await
+            .or_else(|| Some("http://localhost:3001/graphql".to_string()))
             .unwrap();
         info!("GraphQL URL: {}", gql_url);
 
