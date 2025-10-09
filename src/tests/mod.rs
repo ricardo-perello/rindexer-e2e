@@ -9,6 +9,7 @@ pub mod restart_checkpoint;
 pub mod graphql_start;
 pub mod config_validation;
 pub mod health_assertions;
+pub mod postgres_e2e;
 
 // Registry and runner
 pub mod registry;

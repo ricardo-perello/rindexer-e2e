@@ -67,6 +67,9 @@ impl TestRegistry {
         // Health assertions
         tests.extend(crate::tests::health_assertions::HealthAssertionsTests::get_tests());
 
+        // Postgres E2E
+        tests.extend(crate::tests::postgres_e2e::PostgresE2ETests::get_tests());
+
         tests
     }
 

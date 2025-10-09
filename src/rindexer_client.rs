@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct RindexerInstance {
@@ -16,6 +17,7 @@ pub struct RindexerInstance {
     pub project_path: PathBuf,
     pub binary_path: String,
     pub sync_completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +41,14 @@ impl RindexerInstance {
             project_path,
             binary_path: binary_path.to_string(),
             sync_completed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            env: HashMap::new(),
         }
+    }
+
+    /// Provide environment variables to the rindexer process
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.env.insert(key.to_string(), value.to_string());
+        self
     }
 
     /// Execute a rindexer CLI command
@@ -115,6 +124,9 @@ impl RindexerInstance {
            .arg("indexer")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
+        if !self.env.is_empty() {
+            cmd.envs(self.env.clone());
+        }
         
         info!("Executing command: {:?}", cmd);
         
@@ -164,6 +176,9 @@ impl RindexerInstance {
            .arg("graphql")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
+        if !self.env.is_empty() {
+            cmd.envs(self.env.clone());
+        }
         
         let mut child = cmd.spawn()
             .context("Failed to start Rindexer GraphQL")?;
@@ -199,6 +214,9 @@ impl RindexerInstance {
            .arg("all")
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
+        if !self.env.is_empty() {
+            cmd.envs(self.env.clone());
+        }
         
         let mut child = cmd.spawn()
             .context("Failed to start Rindexer all services")?;
