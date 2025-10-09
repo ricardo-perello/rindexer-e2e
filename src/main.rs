@@ -8,6 +8,7 @@ mod test_suite;
 mod tests;
 mod health_client;
 mod live_feeder;
+mod docker;
 
 use tests::run_tests;
 

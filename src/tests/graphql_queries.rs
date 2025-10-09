@@ -34,22 +34,23 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         config.storage.postgres.enabled = true;
         config.storage.csv.enabled = false;
 
-        // Start Postgres via docker-compose (best-effort skip if unavailable)
-        let compose_dir = "test_examples/rindexer_demo_cli_anvil";
-        let up = std::process::Command::new("docker")
-            .args(["compose", "-f", "docker-compose.yml", "up", "-d"])
-            .current_dir(compose_dir)
-            .output();
-        if let Ok(out) = up {
-            if !out.status.success() {
-                info!("Docker compose up failed; skipping GraphQL test: {}", String::from_utf8_lossy(&out.stderr));
-                return Ok(());
+        // Start a clean Postgres container (random port) for GraphQL backing store
+        let (container_name, pg_port) = match crate::docker::start_postgres_container().await {
+            Ok(v) => v,
+            Err(e) => { return Err(crate::tests::test_runner::SkipTest(format!("Docker not available: {}", e)).into()); }
+        };
+        // Wait for Postgres readiness
+        {
+            let mut ready = false;
+            for _ in 0..40 {
+                if tokio_postgres::connect(
+                    &format!("host=localhost port={} user=postgres password=postgres dbname=postgres", pg_port),
+                    tokio_postgres::NoTls,
+                ).await.is_ok() { ready = true; break; }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
-        } else {
-            info!("Docker not available; skipping GraphQL test");
-            return Ok(());
+            if !ready { return Err(anyhow::anyhow!("Postgres did not become ready in time")); }
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Write config & ABI
         let config_path = context.project_path.join("rindexer.yaml");
@@ -61,18 +62,18 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         // Start indexer and GraphQL as separate processes with PG env
         let base_instance = crate::rindexer_client::RindexerInstance::new(&context.rindexer_binary, context.project_path.clone())
             .with_env("POSTGRES_HOST", "localhost")
-            .with_env("POSTGRES_PORT", "5440")
+            .with_env("POSTGRES_PORT", &pg_port.to_string())
             .with_env("POSTGRES_USER", "postgres")
             .with_env("POSTGRES_PASSWORD", "postgres")
-            .with_env("POSTGRES_DB", "postgres");
+            .with_env("POSTGRES_DB", "postgres")
+            .with_env("DATABASE_URL", &format!("postgres://postgres:postgres@localhost:{}/postgres", pg_port));
 
         let mut idx = base_instance.clone();
         idx.start_indexer().await?;
         let mut gql = base_instance;
         // If GraphQL cannot start, soft-skip test
         if let Err(e) = gql.start_graphql().await {
-            info!("GraphQL failed to start; skipping GraphQL test: {}", e);
-            return Ok(());
+            return Err(crate::tests::test_runner::SkipTest(format!("GraphQL failed to start: {}", e)).into());
         }
         // Hold onto indexer so logs are processed
         context.rindexer = Some(idx);
@@ -122,6 +123,9 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         let _ = body["data"]["transfers"]["pageInfo"]["hasNextPage"].as_bool();
 
         // Feeder is managed by TestRunner; no local stop
+
+        // Cleanup PG container
+        let _ = crate::docker::stop_postgres_container(&container_name).await;
 
         info!("✓ GraphQL Queries Test PASSED: basic query, filter, pagination");
         Ok(())

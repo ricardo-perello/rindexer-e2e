@@ -150,9 +150,13 @@ impl RindexerInstance {
         let mut child = cmd.spawn()
             .context("Client: Failed to start Rindexer indexer")?;
         debug!("Client: Rindexer indexer process started");
+
+
         // Start log streaming for Rindexer with completion detection
         Self::start_log_streaming_with_completion_detection(&mut child, self.sync_completed.clone(), self.graphql_url.clone()).await;
         debug!("Client: Log streaming started");
+
+        
         // Wait for Rindexer to start
         sleep(Duration::from_millis(500)).await;
         

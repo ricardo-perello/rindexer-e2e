@@ -29,25 +29,11 @@ fn postgres_end_to_end_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
     Box::pin(async move {
         info!("Running Postgres E2E Test");
 
-        // Start a local Postgres using the provided docker-compose (anvil demo) on port 5440
-        // Non-interactive: best-effort; if docker not available, skip with soft pass
-        let compose_dir = "test_examples/rindexer_demo_cli_anvil";
-        let up = std::process::Command::new("docker")
-            .args(["compose", "-f", "docker-compose.yml", "up", "-d"])
-            .current_dir(compose_dir)
-            .output();
-        if let Ok(out) = up {
-            if !out.status.success() {
-                info!("Docker compose up failed; skipping Postgres E2E: {}", String::from_utf8_lossy(&out.stderr));
-                return Ok(());
-            }
-        } else {
-            info!("Docker not available; skipping Postgres E2E");
-            return Ok(());
-        }
-
-        // Give Postgres a moment to boot
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Start a clean Postgres container (random local port)
+        let (container_name, pg_port) = match crate::docker::start_postgres_container().await {
+            Ok(v) => v,
+            Err(e) => { return Err(crate::tests::test_runner::SkipTest(format!("Docker not available: {}", e)).into()); }
+        };
 
         // Deploy contract and build config with Postgres enabled
         let contract_address = context.deploy_test_contract().await?;
@@ -63,13 +49,29 @@ fn postgres_end_to_end_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
             }
         }
 
-        // Start rindexer with PG env vars
+        // Wait for Postgres to accept connections before starting rindexer
+        {
+            let mut ready = false;
+            for _ in 0..40 {
+                if tokio_postgres::connect(
+                    &format!("host=localhost port={} user=postgres password=postgres dbname=postgres", pg_port),
+                    tokio_postgres::NoTls,
+                ).await.is_ok() {
+                    ready = true; break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            if !ready { return Err(anyhow::anyhow!("Postgres did not become ready in time")); }
+        }
+
+        // Start rindexer with PG env vars (also provide DATABASE_URL)
         let mut r = crate::rindexer_client::RindexerInstance::new(&context.rindexer_binary, context.project_path.clone())
             .with_env("POSTGRES_HOST", "localhost")
-            .with_env("POSTGRES_PORT", "5440")
+            .with_env("POSTGRES_PORT", &pg_port.to_string())
             .with_env("POSTGRES_USER", "postgres")
             .with_env("POSTGRES_PASSWORD", "postgres")
-            .with_env("POSTGRES_DB", "postgres");
+            .with_env("POSTGRES_DB", "postgres")
+            .with_env("DATABASE_URL", &format!("postgres://postgres:postgres@localhost:{}/postgres", pg_port));
 
         // Write config and start
         let config_path = context.project_path.join("rindexer.yaml");
@@ -87,16 +89,16 @@ fn postgres_end_to_end_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
 
         // Connect to Postgres and assert rows exist for SimpleERC20.Transfer
         let (client, connection) = tokio_postgres::connect(
-            "host=localhost port=5440 user=postgres password=postgres dbname=postgres",
+            &format!("host=localhost port={} user=postgres password=postgres dbname=postgres", pg_port),
             tokio_postgres::NoTls,
         ).await?;
         tokio::spawn(async move {
             let _ = connection.await;
         });
 
-        // Table naming depends on rindexer conventions; assume snake_case contract-event
+        // Table naming follows rindexer logs: schema `contract_test_simple_erc_20`, table `transfer`
         let row = client.query_opt(
-            "SELECT COUNT(*)::BIGINT FROM simpleerc20_transfer",
+            "SELECT COUNT(*)::BIGINT FROM contract_test_simple_erc_20.transfer",
             &[],
         ).await?;
 
@@ -110,6 +112,9 @@ fn postgres_end_to_end_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         }
 
         info!("✓ Postgres E2E Test PASSED: rows inserted");
+
+        // Cleanup container
+        let _ = crate::docker::stop_postgres_container(&container_name).await;
         Ok(())
     })
 }
@@ -121,23 +126,11 @@ fn postgres_live_exact_events_test(context: &mut TestContext) -> Pin<Box<dyn Fut
 
         info!("Running Postgres Live Exact Events Test");
 
-        // Start Postgres (best-effort)
-        let compose_dir = "test_examples/rindexer_demo_cli_anvil";
-        let up = std::process::Command::new("docker")
-            .args(["compose", "-f", "docker-compose.yml", "up", "-d"])
-            .current_dir(compose_dir)
-            .output();
-        if let Ok(out) = up {
-            if !out.status.success() {
-                info!("Docker compose up failed; skipping Postgres live exact test: {}", String::from_utf8_lossy(&out.stderr));
-                return Ok(());
-            }
-        } else {
-            info!("Docker not available; skipping Postgres live exact test");
-            return Ok(());
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Start clean Postgres container
+        let (container_name, pg_port) = match crate::docker::start_postgres_container().await {
+            Ok(v) => v,
+            Err(e) => { return Err(crate::tests::test_runner::SkipTest(format!("Docker not available: {}", e)).into()); }
+        };
 
         // Deploy contract and enable Postgres
         let contract_address = context.deploy_test_contract().await?;
@@ -145,13 +138,29 @@ fn postgres_live_exact_events_test(context: &mut TestContext) -> Pin<Box<dyn Fut
         config.storage.postgres.enabled = true;
         config.storage.csv.enabled = false;
 
+        // Ensure Postgres is ready before starting rindexer
+        {
+            let mut ready = false;
+            for _ in 0..40 {
+                if tokio_postgres::connect(
+                    &format!("host=localhost port={} user=postgres password=postgres dbname=postgres", pg_port),
+                    tokio_postgres::NoTls,
+                ).await.is_ok() {
+                    ready = true; break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            if !ready { return Err(anyhow::anyhow!("Postgres did not become ready in time")); }
+        }
+
         // Start rindexer with PG env vars
         let mut r = crate::rindexer_client::RindexerInstance::new(&context.rindexer_binary, context.project_path.clone())
             .with_env("POSTGRES_HOST", "localhost")
-            .with_env("POSTGRES_PORT", "5440")
+            .with_env("POSTGRES_PORT", &pg_port.to_string())
             .with_env("POSTGRES_USER", "postgres")
             .with_env("POSTGRES_PASSWORD", "postgres")
-            .with_env("POSTGRES_DB", "postgres");
+            .with_env("POSTGRES_DB", "postgres")
+            .with_env("DATABASE_URL", &format!("postgres://postgres:postgres@localhost:{}/postgres", pg_port));
 
         // Write config
         let config_path = context.project_path.join("rindexer.yaml");
@@ -179,7 +188,7 @@ fn postgres_live_exact_events_test(context: &mut TestContext) -> Pin<Box<dyn Fut
 
         // Connect to Postgres
         let (client, connection) = tokio_postgres::connect(
-            "host=localhost port=5440 user=postgres password=postgres dbname=postgres",
+            &format!("host=localhost port={} user=postgres password=postgres dbname=postgres", pg_port),
             tokio_postgres::NoTls,
         ).await?;
         tokio::spawn(async move { let _ = connection.await; });
@@ -202,7 +211,7 @@ fn postgres_live_exact_events_test(context: &mut TestContext) -> Pin<Box<dyn Fut
         let to_cols = vec!["to_address", "\"to\"", "recipient", "to"]; // try quoted "to" as well
         let mut found = 0usize;
         for col in to_cols {
-            let query = format!("SELECT {} FROM simpleerc20_transfer ORDER BY block_number DESC LIMIT 10", col);
+            let query = format!("SELECT {} FROM contract_test_simple_erc_20.transfer ORDER BY block_number DESC LIMIT 10", col);
             let rows = match client.query(query.as_str(), &[]).await {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -236,6 +245,7 @@ fn postgres_live_exact_events_test(context: &mut TestContext) -> Pin<Box<dyn Fut
         }
 
         info!("✓ Postgres Live Exact Events Test PASSED: recipients matched");
+        let _ = crate::docker::stop_postgres_container(&container_name).await;
         Ok(())
     })
 }

@@ -7,7 +7,12 @@ use crate::test_suite::TestContext;
 use crate::tests::test_suite::TestSuite;
 use crate::tests::registry::{TestDefinition, TestRegistry};
 use crate::tests::test_suite::{TestInfo, TestResult};
+use thiserror::Error;
 use crate::live_feeder::LiveFeeder;
+
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub struct SkipTest(pub String);
 
 pub struct TestRunner {
     config: TestRunnerConfig,
@@ -95,8 +100,13 @@ impl TestRunner {
                 TestResult::Passed
             }
             Ok(Err(e)) => {
-                println!("[ERROR] FAIL");
-                TestResult::Failed(e.to_string())
+                if let Some(skip) = e.downcast_ref::<SkipTest>() {
+                    println!("[SKIP] SKIPPED");
+                    TestResult::Skipped(skip.0.clone())
+                } else {
+                    println!("[ERROR] FAIL");
+                    TestResult::Failed(e.to_string())
+                }
             }
             Err(_) => {
                 println!("[TIMEOUT] TIMEOUT");
