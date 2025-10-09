@@ -24,24 +24,29 @@ fn health_endpoint_ready_and_complete_test(context: &mut TestContext) -> Pin<Box
     Box::pin(async move {
         info!("Running Health Endpoint Assertions Test");
 
-        // Use contract config to ensure at least one task runs, and bound the range
+        // Use contract config to ensure at least one task runs; keep live mode (no end_block)
         let contract_address = context.deploy_test_contract().await?;
         let mut config = context.create_contract_config(&contract_address);
-        // Bound indexing so health can report completion even with auto-mined blocks
-        let current_block = context.anvil.get_block_number().await?;
-        if let Some(contract) = config.contracts.get_mut(0) {
-            if let Some(detail) = contract.details.get_mut(0) {
-                detail.end_block = Some(current_block.to_string());
-            }
-        }
         context.start_rindexer(config).await?;
 
-        // Wait for health endpoint to report readiness
-        context.wait_for_health_ready(10).await?;
+        // Wait for the health HTTP endpoint to be up quickly (lifecycle: starts early)
+        if let Some(health) = &context.health_client {
+            health.wait_for_up(10).await?;
+        }
 
-        // While indexing, /health should be available; then ensure completion
-        // Use log-based completion to avoid racing the health server shutdown after bounded sync
+        // While indexing, /health is available; use logs to detect initial sync completion
         context.wait_for_sync_completion(30).await?;
+
+        // After initial sync, active_tasks should drop to 0 even if live watcher remains
+        if let Some(health) = &context.health_client {
+            if let Ok(state) = health.get_health().await {
+                if let Some(idx) = state.indexing.as_ref() {
+                    if idx.active_tasks != 0 {
+                        return Err(anyhow::anyhow!("Indexing did not report 0 active tasks after sync (got {})", idx.active_tasks));
+                    }
+                }
+            }
+        }
 
         info!("✓ Health Endpoint Assertions Test PASSED: ready and indexing completed");
         Ok(())
