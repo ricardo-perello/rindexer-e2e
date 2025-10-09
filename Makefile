@@ -52,13 +52,20 @@ start-anvil: ## Start Anvil blockchain
 		--block-time 1 --gas-limit 30000000 > anvil.log 2>&1 &
 	@echo $$! > anvil.pid
 	@sleep 2
-	@echo "Anvil started (PID: $$(cat anvil.pid))"
+	@if [ -f anvil.pid ]; then \
+		echo "Anvil started (PID: $$(cat anvil.pid))"; \
+	else \
+		echo "Anvil started (PID: unknown - managed by tests)"; \
+	fi
 
 stop-anvil: ## Stop Anvil blockchain
 	@if [ -f anvil.pid ]; then \
 		echo "Stopping Anvil (PID: $$(cat anvil.pid))..."; \
 		kill $$(cat anvil.pid) 2>/dev/null || true; \
 		rm -f anvil.pid anvil.log; \
+	else \
+		echo "Stopping Anvil (PID: unknown - managed by tests)..."; \
+		pkill -f anvil 2>/dev/null || true; \
 	fi
 
 # =============================================================================

@@ -93,6 +93,11 @@ fn live_indexing_high_frequency_test(context: &mut TestContext) -> Pin<Box<dyn F
         let initial_events = context.get_event_count()?;
         info!("Initial event count: {}", initial_events);
         
+        // The LiveFeeder is already started by the TestRunner for live tests
+        // Give the LiveFeeder some time to submit transactions (need more time for 2 events)
+        info!("Waiting for LiveFeeder to submit transactions...");
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        
         // For high frequency test, we expect more events
         let expected_new_events = 2; // Expect at least 2 new events
         let final_events = context.wait_for_new_events(expected_new_events, 60).await?;
