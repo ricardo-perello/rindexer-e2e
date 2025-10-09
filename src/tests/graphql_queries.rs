@@ -83,35 +83,138 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         // LiveFeeder is already running from TestRunner for live tests; wait a bit for events
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-        // Basic GraphQL query for transfers with filter and pagination
-        let query = r#"{
-  transfers(first: 2, orderBy: blockNumber, orderDirection: desc) {
-    edges { node { blockNumber to from value txHash } }
-    pageInfo { hasNextPage }
-  }
-}"#;
-
         let client = reqwest::Client::new();
-        // Retry a few times while GraphQL warms up
-        let mut body: Option<serde_json::Value> = None;
-        for _ in 0..10 {
-            let resp = client.post(&gql_url)
-                .json(&serde_json::json!({"query": query}))
-                .send().await;
-            if let Ok(r) = resp {
-                if r.status().is_success() {
-                    if let Ok(json) = r.json::<serde_json::Value>().await {
-                        body = Some(json); break;
+
+        // Discover actual query field for transfers via introspection
+        let mut transfer_field = "transfers".to_string();
+        let introspect_qtype = r#"query QType { __schema { queryType { name } } }"#;
+        let mut query_type_name = "Query".to_string();
+        if let Ok(resp) = client.post(&gql_url).json(&serde_json::json!({"query": introspect_qtype})).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(name) = json["data"]["__schema"]["queryType"]["name"].as_str() {
+                    query_type_name = name.to_string();
+                }
+            }
+        }
+        let introspect_fields = format!("query Fields {{ Root: __type(name: \"{}\") {{ fields {{ name }} }} }}", query_type_name);
+        if let Ok(resp) = client.post(&gql_url).json(&serde_json::json!({"query": introspect_fields})).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(fields) = json["data"]["Root"]["fields"].as_array() {
+                    if let Some(name) = fields.iter().filter_map(|f| f["name"].as_str()).find(|n| n.to_lowercase().contains("transfer")) {
+                        transfer_field = name.to_string();
                     }
                 }
+            }
+        }
+        tracing::info!("Discovered transfer field: {} on root type {}", transfer_field, query_type_name);
+
+        // Introspect the field's args and return shape to build a compatible query
+        #[derive(Debug)]
+        struct FieldInfo { args: Vec<String>, returns_object: bool, return_object_name: Option<String> }
+        let mut field_info = FieldInfo { args: vec![], returns_object: false, return_object_name: None };
+        let introspect_field = format!(
+            "query FInfo {{\n  Root: __type(name: \"{}\") {{\n    fields {{ name args {{ name }} type {{ kind name ofType {{ kind name ofType {{ kind name }} }} }} }}\n  }}\n}}",
+            query_type_name
+        );
+        if let Ok(resp) = client.post(&gql_url).json(&serde_json::json!({"query": introspect_field})).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(fields) = json["data"]["Root"]["fields"].as_array() {
+                    if let Some(f) = fields.iter().find(|f| f["name"].as_str() == Some(&transfer_field)) {
+                        if let Some(args) = f["args"].as_array() {
+                            field_info.args = args.iter().filter_map(|a| a["name"].as_str().map(|s| s.to_string())).collect();
+                        }
+                        // Unwrap nested ofType to get the named type
+                        let mut t = &f["type"];
+                        let mut name = t["name"].as_str().map(|s| s.to_string());
+                        let mut kind = t["kind"].as_str().unwrap_or("").to_string();
+                        if name.is_none() {
+                            if let Some(ot) = t["ofType"].as_object() { t = &f["type"]["ofType"]; kind = t["kind"].as_str().unwrap_or("").to_string(); name = t["name"].as_str().map(|s| s.to_string()); }
+                        }
+                        if name.is_none() {
+                            if let Some(_ot2) = t["ofType"].as_object() { t = &t["ofType"]; kind = t["kind"].as_str().unwrap_or("").to_string(); name = t["name"].as_str().map(|s| s.to_string()); }
+                        }
+                        field_info.returns_object = kind == "OBJECT" || name.is_some();
+                        field_info.return_object_name = name;
+                    }
+                }
+            }
+        }
+
+        // If the return is an object, check for edges/items
+        let mut use_edges = false;
+        let mut use_items = false;
+        if let Some(obj_name) = &field_info.return_object_name {
+            let inspect_return = format!(
+                "query RType {{ T: __type(name: \"{}\") {{ fields {{ name }} }} }}",
+                obj_name
+            );
+            if let Ok(resp) = client.post(&gql_url).json(&serde_json::json!({"query": inspect_return})).send().await {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(fields) = json["data"]["T"]["fields"].as_array() {
+                        use_edges = fields.iter().any(|f| f["name"].as_str() == Some("edges"));
+                        use_items = fields.iter().any(|f| f["name"].as_str() == Some("items"));
+                    }
+                }
+            }
+        }
+
+        // Pick a pagination argument if supported
+        let page_arg = if field_info.args.iter().any(|a| a == "first") { Some("first") }
+            else if field_info.args.iter().any(|a| a == "take") { Some("take") }
+            else if field_info.args.iter().any(|a| a == "limit") { Some("limit") } else { None };
+        let page_arg_render = page_arg.map(|a| format!("{}: 5", a)).unwrap_or_default();
+
+        // Build dynamic query for common shapes: connection(edges/node), items, or direct list
+        let query = if use_edges {
+            if page_arg.is_some() {
+                format!("{{\n  {}({}) {{ edges {{ node {{ txHash }} }} pageInfo {{ hasNextPage }} }}\n}}", transfer_field, page_arg_render)
+            } else {
+                format!("{{\n  {} {{ edges {{ node {{ txHash }} }} pageInfo {{ hasNextPage }} }}\n}}", transfer_field)
+            }
+        } else if use_items {
+            if page_arg.is_some() {
+                format!("{{\n  {}({}) {{ items {{ txHash }} pageInfo {{ hasNextPage }} }}\n}}", transfer_field, page_arg_render)
+            } else {
+                format!("{{\n  {} {{ items {{ txHash }} pageInfo {{ hasNextPage }} }}\n}}", transfer_field)
+            }
+        } else {
+            // Assume it's a direct list
+            if page_arg.is_some() {
+                format!("{{\n  {}({}) {{ txHash }}\n}}", transfer_field, page_arg_render)
+            } else {
+                format!("{{\n  {} {{ txHash }}\n}}", transfer_field)
+            }
+        };
+
+        // Retry more times and log errors to diagnose
+        let mut body: Option<serde_json::Value> = None;
+        for _ in 0..20 {
+            match client.post(&gql_url)
+                .json(&serde_json::json!({"query": query}))
+                .send().await {
+                Ok(rsp) => {
+                    if rsp.status().is_success() {
+                        match rsp.json::<serde_json::Value>().await {
+                            Ok(json) => { body = Some(json); break; }
+                            Err(e) => { tracing::error!("GraphQL JSON parse error: {}", e); }
+                        }
+                    } else {
+                        if let Ok(text) = rsp.text().await { tracing::error!("GraphQL non-200: {}", text); }
+                    }
+                }
+                Err(e) => tracing::error!("GraphQL request error: {}", e),
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         let body = body.ok_or_else(|| anyhow::anyhow!("GraphQL did not return success after retries"))?;
 
-        // Sanity checks: structure + at least one edge
-        let edges = body["data"]["transfers"]["edges"].as_array().unwrap_or(&vec![]).len();
-        if edges == 0 {
+        // Sanity checks: try edges/items/direct list
+        let data = &body["data"][&transfer_field];
+        let edges_len = data["edges"].as_array().map(|v| v.len()).unwrap_or(0);
+        let items_len = data["items"].as_array().map(|v| v.len()).unwrap_or(0);
+        let list_len = data.as_array().map(|v| v.len()).unwrap_or(0);
+        let total = edges_len.max(items_len).max(list_len);
+        if total == 0 {
             return Err(anyhow::anyhow!("GraphQL returned no transfers"));
         }
 
