@@ -72,44 +72,21 @@ stop-anvil: ## Stop Anvil blockchain
 # TEST RUNNERS - MAIN TARGETS
 # =============================================================================
 
-test-quick: ## Run tests assuming Anvil is already running
-	@echo "Running E2E tests (assuming Anvil is running)..."
-	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli
-
 run-tests: ## Run all E2E tests with clean output
 	@echo "Running all E2E tests with clean output..."
-	@make start-anvil
-	@sleep 3
 	@RUST_LOG=error cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli
-	@make stop-anvil
 
 run-tests-debug: ## Run all E2E tests with debug output
 	@echo "Running all E2E tests with debug output..."
-	@make start-anvil
-	@sleep 3
 	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli
-	@make stop-anvil
 
 run-tests-historical: ## Run only historical indexing tests
 	@echo "Running historical indexing tests..."
-	@make start-anvil
-	@sleep 3
 	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "test_1_basic_connection,test_2_contract_discovery,test_3_historic_indexing,test_6_demo_yaml,test_8_forked_anvil"
-	@make stop-anvil
 
 run-tests-live: ## Run only live indexing tests
 	@echo "Running live indexing tests..."
-	@make start-anvil
-	@sleep 3
 	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "test_live_indexing_basic,test_live_indexing_high_frequency"
-	@make stop-anvil
-
-run-tests-all: ## Run all tests (historical + live)
-	@echo "Running all tests (historical + live)..."
-	@make start-anvil
-	@sleep 3
-	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli
-	@make stop-anvil
 
 # =============================================================================
 # INDIVIDUAL TEST RUNNERS
@@ -120,22 +97,16 @@ run-test: ## Run a single test (use TEST=test_name)
 		echo "❌ Error: TEST variable must be set. Usage: make run-test TEST=test_name"; \
 		exit 1; \
 	fi
-	@echo "🧪 Running single test: $(TEST)..."
-	@make start-anvil
-	@sleep 3
+	@echo "Running single test: $(TEST)..."
 	@RUST_LOG=info cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "$(TEST)"
-	@make stop-anvil
 
 run-test-debug: ## Run a single test with debug output (use TEST=test_name)
 	@if [ -z "$(TEST)" ]; then \
 		echo "❌ Error: TEST variable must be set. Usage: make run-test-debug TEST=test_name"; \
 		exit 1; \
 	fi
-	@echo "🧪 Running single test: $(TEST) (debug output)..."
-	@make start-anvil
-	@sleep 3
+	@echo "Running single test: $(TEST) (debug output)..."
 	@RUST_LOG=debug cargo run --bin rindexer-e2e -- --rindexer-binary ../rindexer/target/release/rindexer_cli --tests "$(TEST)"
-	@make stop-anvil
 
 # =============================================================================
 # CONVENIENCE TEST TARGETS
@@ -166,28 +137,9 @@ test-live-high-freq: ## Run high frequency live indexing test
 # DEBUG AND DEVELOPMENT TARGETS
 # =============================================================================
 
-logs: ## Show recent logs from all services
-	@echo "=== Recent Anvil Logs ==="
-	@tail -n 20 anvil.log 2>/dev/null || echo "No anvil.log found"
-
-logs-live: ## Follow live logs from Anvil
-	@echo "Following live Anvil logs (Ctrl+C to stop)..."
-	@tail -f anvil.log 2>/dev/null || echo "No anvil.log found"
-
-logs-anvil: ## Show recent Anvil logs only
-	@tail -n 50 anvil.log 2>/dev/null || echo "No anvil.log found"
-
 logs-clear: ## Clear all log files
 	@rm -f *.log
 	@echo "All log files cleared"
-
-check-services: ## Check if Anvil is running
-	@echo "Checking service status..."
-	@if [ -f anvil.pid ] && kill -0 $$(cat anvil.pid) 2>/dev/null; then \
-		echo "✅ Anvil is running (PID: $$(cat anvil.pid))"; \
-	else \
-		echo "❌ Anvil is not running"; \
-	fi
 
 # =============================================================================
 # DEVELOPMENT HELPERS
