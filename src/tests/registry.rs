@@ -51,11 +51,21 @@ impl TestRegistry {
         tests.extend(crate::tests::basic_connection::BasicConnectionTests::get_tests());
         tests.extend(crate::tests::contract_discovery::ContractDiscoveryTests::get_tests());
         tests.extend(crate::tests::historic_indexing::HistoricIndexingTests::get_tests());
+        tests.extend(crate::tests::config_validation::ConfigValidationTests::get_tests());
         tests.extend(crate::tests::demo_yaml::DemoYamlTests::get_tests());
         tests.extend(crate::tests::forked_anvil::ForkedAnvilTests::get_tests());
 
         // Live indexing tests
         tests.extend(crate::tests::live_indexing::LiveIndexingTests::get_tests());
+
+        // Resilience/restart tests
+        tests.extend(crate::tests::restart_checkpoint::RestartCheckpointTests::get_tests());
+
+        // GraphQL
+        tests.extend(crate::tests::graphql_start::GraphqlStartTests::get_tests());
+
+        // Health assertions
+        tests.extend(crate::tests::health_assertions::HealthAssertionsTests::get_tests());
 
         tests
     }

@@ -5,6 +5,10 @@ pub mod historic_indexing;
 pub mod demo_yaml;
 pub mod forked_anvil;
 pub mod live_indexing;
+pub mod restart_checkpoint;
+pub mod graphql_start;
+pub mod config_validation;
+pub mod health_assertions;
 
 // Registry and runner
 pub mod registry;
