@@ -22,6 +22,7 @@ eyre = "0.6"
 alloy = { version = "0.7", features = ["full"] }
 tokio-postgres = { version = "0.7", features = ["runtime"] }
 regex = "1.10"
+dotenvy = "0.15"
 [dev-dependencies]
 tokio-test = "0.4"
 

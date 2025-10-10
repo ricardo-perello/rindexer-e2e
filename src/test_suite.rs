@@ -165,13 +165,24 @@ impl TestContext {
     }
     
     pub async fn start_rindexer(&mut self, config: RindexerConfig) -> Result<()> {
-        // Create abis directory and copy ABI file (idempotent for restarts)
+        // Create abis directory and copy all ABI files from repo abis/
         let abis_dir = self.project_path.join("abis");
         std::fs::create_dir_all(&abis_dir)
             .context("Failed to create abis directory")?;
-        
-        std::fs::copy("abis/SimpleERC20.abi.json", abis_dir.join("SimpleERC20.abi.json"))
-            .context("Failed to copy ABI file")?;
+
+        if let Ok(entries) = std::fs::read_dir("abis") {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_file() {
+                        let src_path = entry.path();
+                        if let Some(name) = src_path.file_name() {
+                            let dst_path = abis_dir.join(name);
+                            let _ = std::fs::copy(&src_path, &dst_path);
+                        }
+                    }
+                }
+            }
+        }
         
         // Write the Rindexer configuration
         let config_path = self.project_path.join("rindexer.yaml");

@@ -1,6 +1,7 @@
 use clap::Parser;
 use tracing::{info, error};
 use tracing_subscriber::{fmt, EnvFilter};
+use std::path::Path;
 
 mod anvil_setup;
 mod rindexer_client;
@@ -30,6 +31,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load env from common locations if present
+    // Try project root .env, then src/.env
+    let _ = dotenvy::from_filename(".env");
+    if !Path::new(".env").exists() {
+        let _ = dotenvy::from_filename("src/.env");
+    }
+
     let args = Args::parse();
     
     // Initialize tracing with configurable log level

@@ -53,7 +53,6 @@ impl TestRegistry {
         tests.extend(crate::tests::historic_indexing::HistoricIndexingTests::get_tests());
         tests.extend(crate::tests::config_validation::ConfigValidationTests::get_tests());
         tests.extend(crate::tests::demo_yaml::DemoYamlTests::get_tests());
-        tests.extend(crate::tests::forked_anvil::ForkedAnvilTests::get_tests());
 
         // Live indexing tests
         tests.extend(crate::tests::live_indexing::LiveIndexingTests::get_tests());
@@ -72,6 +71,9 @@ impl TestRegistry {
 
         // GraphQL query tests
         tests.extend(crate::tests::graphql_queries::GraphqlQueriesTests::get_tests());
+
+        // Direct RPC tests
+        tests.extend(crate::tests::direct_rpc::DirectRpcTests::get_tests());
 
         tests
     }
