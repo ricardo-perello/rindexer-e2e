@@ -26,7 +26,7 @@ fn health_endpoint_ready_and_complete_test(context: &mut TestContext) -> Pin<Box
 
         // Use contract config to ensure at least one task runs; keep live mode (no end_block)
         let contract_address = context.deploy_test_contract().await?;
-        let mut config = context.create_contract_config(&contract_address);
+        let config = context.create_contract_config(&contract_address);
         context.start_rindexer(config).await?;
 
         // Wait for the health HTTP endpoint to be up quickly (lifecycle: starts early)

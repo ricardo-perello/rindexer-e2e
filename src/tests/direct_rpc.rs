@@ -58,7 +58,7 @@ fn direct_rpc_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Res
         context.wait_for_sync_completion(sync_timeout).await?;
 
         // Compare produced CSV vs expected CSV using tx_hash only (log_index often empty in fixtures)
-        let produced_csv_path = produced_csv_path_for(&context, "ERC20", "transfer");
+        let produced_csv_path = produced_csv_path_for(context, "ERC20", "transfer");
         let expected_hashes = load_tx_hashes_from_csv(&expected_csv)
             .context("Failed to load expected CSV tx hashes")?;
         let produced_hashes = load_tx_hashes_from_csv(&produced_csv_path)
@@ -160,21 +160,4 @@ fn derive_block_range_from_csv(path: &str) -> Result<(u64, u64)> {
         _ => Err(anyhow::anyhow!("Could not derive block range from CSV")),
     }
 }
-
-fn get_csv_event_count(context: &TestContext, contract_name: &str, event_slug_lowercase: &str) -> Result<usize> {
-    let file_name = format!("{}-{}.csv", contract_name.to_lowercase(), event_slug_lowercase);
-    let csv_path = context
-        .get_csv_output_path()
-        .join(contract_name)
-        .join(file_name);
-
-    if !csv_path.exists() {
-        return Err(anyhow::anyhow!("CSV file does not exist yet: {:?}", csv_path));
-    }
-
-    let content = std::fs::read_to_string(&csv_path)?;
-    let lines: Vec<&str> = content.lines().collect();
-    Ok(if lines.len() > 1 { lines.len() - 1 } else { 0 })
-}
-
 

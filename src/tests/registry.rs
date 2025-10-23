@@ -93,18 +93,4 @@ impl TestRegistry {
             .filter(|test| filter.contains(&test.name.to_string()))
             .collect()
     }
-
-    pub fn get_historical_tests() -> Vec<TestDefinition> {
-        Self::get_all_tests()
-            .into_iter()
-            .filter(|test| !test.is_live_test)
-            .collect()
-    }
-
-    pub fn get_live_tests() -> Vec<TestDefinition> {
-        Self::get_all_tests()
-            .into_iter()
-            .filter(|test| test.is_live_test)
-            .collect()
-    }
 }

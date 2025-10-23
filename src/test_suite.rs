@@ -215,36 +215,6 @@ impl TestContext {
         Ok(())
     }
     
-    /// Wait for Rindexer health endpoint to be ready
-    pub async fn wait_for_health_ready(&mut self, timeout_seconds: u64) -> Result<()> {
-        if let Some(health_client) = &self.health_client {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            
-            match health_client.wait_for_healthy(timeout_seconds).await {
-                Ok(_) => info!("✓ Rindexer health endpoint confirms readiness"),
-                Err(e) => {
-                    warn!("Health endpoint not available, falling back to process check: {}", e);
-                    if !self.is_rindexer_running() {
-                        return Err(anyhow::anyhow!("Rindexer process is not running"));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-    
-    /// Wait for indexing to complete (health endpoint if available, otherwise logs)
-    pub async fn wait_for_indexing_complete(&mut self, timeout_seconds: u64) -> Result<()> {
-        if let Some(health_client) = &self.health_client {
-            info!("Waiting for indexing to complete using health endpoint...");
-            health_client.wait_for_indexing_complete(timeout_seconds).await?;
-            info!("✓ Indexing completed according to health endpoint");
-        } else {
-            self.wait_for_sync_completion(timeout_seconds).await?;
-        }
-        Ok(())
-    }
-    
     pub fn get_csv_output_path(&self) -> PathBuf {
         self.project_path.join("generated_csv")
     }
@@ -298,20 +268,6 @@ impl TestContext {
         let content = std::fs::read_to_string(&csv_path)?;
         let lines: Vec<&str> = content.lines().collect();
         Ok(if lines.len() > 1 { lines.len() - 1 } else { 0 }) // Subtract header
-    }
-
-    /// Wait for Rindexer to be ready for live indexing (health check)
-    pub async fn wait_for_live_indexing_ready(&self, timeout_seconds: u64) -> Result<()> {
-        if let Some(health_client) = &self.health_client {
-            health_client.wait_for_healthy(timeout_seconds).await?;
-            info!("✓ Rindexer is ready for live indexing");
-        } else {
-            // Fallback to basic process check
-            if !self.is_rindexer_running() {
-                return Err(anyhow::anyhow!("Rindexer process is not running"));
-            }
-        }
-        Ok(())
     }
 }
 

@@ -19,31 +19,22 @@ pub struct TestInfo {
     pub name: String,
     pub result: TestResult,
     pub duration: Duration,
-    pub error_message: Option<String>,
 }
 
 impl TestInfo {
     pub fn new(name: String, result: TestResult, duration: Duration) -> Self {
-        let error_message = match &result {
-            TestResult::Failed(msg) => Some(msg.clone()),
-            TestResult::Timeout => Some("Test timed out".to_string()),
-            TestResult::Skipped(msg) => Some(msg.clone()),
-            TestResult::Passed => None,
-        };
-
-        Self { name, result, duration, error_message }
+        Self { name, result, duration }
     }
 }
 
 pub struct TestSuite {
-    pub name: String,
     pub tests: Vec<TestInfo>,
     pub duration: Duration,
 }
 
 impl TestSuite {
-    pub fn new(name: String) -> Self {
-        Self { name, tests: Vec::new(), duration: Duration::ZERO }
+    pub fn new(_name: String) -> Self {
+        Self { tests: Vec::new(), duration: Duration::ZERO }
     }
 
     pub fn add_test(&mut self, test: TestInfo) {
@@ -111,6 +102,16 @@ impl TestSuite {
                     println!("  [ERROR] {} - {}", test.name, msg);
                 } else if let TestResult::Timeout = &test.result {
                     println!("  [TIMEOUT] {} - Test timed out after {} seconds", test.name, test.duration.as_secs());
+                }
+            }
+        }
+
+        if skipped > 0 {
+            println!();
+            println!("Skipped Tests:");
+            for test in &self.tests {
+                if let TestResult::Skipped(reason) = &test.result {
+                    println!("  [SKIP] {} - {}", test.name, reason);
                 }
             }
         }

@@ -3,7 +3,6 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::interval;
 use tracing::{info, debug, warn};
-use hex;
 use alloy::{
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},

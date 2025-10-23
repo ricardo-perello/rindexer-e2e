@@ -8,72 +8,10 @@ use tokio::process::Command as TokioCommand;
 
 pub struct AnvilInstance {
     pub rpc_url: String,
-    pub ws_url: String,
     pub process: Option<tokio::process::Child>,
 }
 
 impl AnvilInstance {
-    pub async fn start_forked_with(rpc_source_url: &str, fork_block_number: Option<u64>) -> Result<Self> {
-        info!("Starting Anvil forked from: {}", rpc_source_url);
-        let mut cmd = TokioCommand::new("anvil");
-        cmd.arg("--fork-url")
-           .arg(rpc_source_url)
-           .arg("--chain-id")
-           .arg("31337")
-           .arg("--accounts")
-           .arg("10")
-           .arg("--balance")
-           .arg("10000")
-           .arg("--gas-limit")
-           .arg("30000000")
-           .arg("--gas-price")
-           .arg("1000000000")
-           .arg("--block-time")
-           .arg("1")
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
-
-        if let Some(block) = fork_block_number {
-            cmd.arg("--fork-block-number").arg(block.to_string());
-        }
-
-        let mut child = cmd.spawn()
-            .context("Failed to start forked Anvil")?;
-
-        // Start log streaming for Anvil
-        Self::start_log_streaming(&mut child).await;
-
-        // Wait a bit for Anvil to start
-        sleep(Duration::from_millis(2000)).await;
-
-        // Check if process is still running
-        match child.try_wait()? {
-            Some(status) => {
-                return Err(anyhow::anyhow!("Forked Anvil exited with status: {}", status));
-            }
-            None => {
-                info!("Forked Anvil process started successfully");
-            }
-        }
-
-        // Wait for RPC to be ready
-        Self::wait_for_rpc_ready("http://127.0.0.1:8545").await?;
-
-        Ok(Self {
-            process: Some(child),
-            rpc_url: "http://127.0.0.1:8545".to_string(),
-            ws_url: "ws://127.0.0.1:8545".to_string(),
-        })
-    }
-
-    /// Convenience: read MAINNET_RPC_URL and FORK_BLOCK_NUMBER from env
-    pub async fn start_forked_from_env() -> Result<Self> {
-        let rpc = std::env::var("MAINNET_RPC_URL")
-            .context("MAINNET_RPC_URL not set; cannot run forked anvil")?;
-        let fork_block = std::env::var("FORK_BLOCK_NUMBER").ok().and_then(|s| s.parse::<u64>().ok());
-        Self::start_forked_with(&rpc, fork_block).await
-    }
-
     pub async fn start_local(private_key: &str) -> Result<Self> {
         info!("Starting local Anvil instance");
         
@@ -113,7 +51,6 @@ impl AnvilInstance {
         }
         
         let rpc_url = "http://127.0.0.1:8545".to_string();
-        let ws_url = "ws://127.0.0.1:8545".to_string();
         
         // Wait for RPC to be ready
         Self::wait_for_rpc_ready(&rpc_url).await?;
@@ -123,23 +60,7 @@ impl AnvilInstance {
         
         Ok(Self {
             rpc_url,
-            ws_url,
             process: Some(child),
-        })
-    }
-    
-    pub async fn connect(rpc_url: String) -> Result<Self> {
-        info!("Connecting to existing Anvil instance at: {}", rpc_url);
-        
-        let ws_url = rpc_url.replace("http://", "ws://");
-        
-        // Verify connection
-        Self::wait_for_rpc_ready(&rpc_url).await?;
-        
-        Ok(Self {
-            rpc_url,
-            ws_url,
-            process: None,
         })
     }
     
@@ -149,7 +70,7 @@ impl AnvilInstance {
         const MAX_ATTEMPTS: u32 = 30;
         
         while attempts < MAX_ATTEMPTS {
-            match client.post(rpc_url)
+            if let Ok(response) = client.post(rpc_url)
                 .json(&serde_json::json!({
                     "jsonrpc": "2.0",
                     "method": "eth_blockNumber",
@@ -157,15 +78,11 @@ impl AnvilInstance {
                     "id": 1
                 }))
                 .send()
-                .await
-            {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        info!("Anvil RPC is ready");
-                        return Ok(());
-                    }
+                .await {
+                if response.status().is_success() {
+                    info!("Anvil RPC is ready");
+                    return Ok(());
                 }
-                Err(_) => {}
             }
             
             attempts += 1;
@@ -254,7 +171,7 @@ impl AnvilInstance {
         info!("Deploying SimpleERC20 test contract...");
         
         let output = std::process::Command::new("forge")
-            .args(&[
+            .args([
                 "create",
                 "--rpc-url", &self.rpc_url,
                 "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",

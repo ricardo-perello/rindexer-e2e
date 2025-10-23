@@ -61,54 +61,6 @@ impl HealthClient {
         Ok(health)
     }
 
-    pub async fn wait_for_healthy(&self, timeout_seconds: u64) -> Result<()> {
-        info!("Waiting for Rindexer health endpoint to be healthy (timeout: {}s)", timeout_seconds);
-        
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
-        
-        while start_time.elapsed() < timeout {
-            match self.get_health().await {
-                Ok(health) => {
-                    debug!("Health status: {:?}", health);
-                    
-                    // Check if all services are healthy
-                    if health.status == "healthy" && 
-                       health.services.database == "healthy" &&
-                       health.services.indexing == "healthy" {
-                        info!("✓ Rindexer is healthy and ready");
-                        return Ok(());
-                    }
-                    
-                    // If indexing is not running but other services are healthy, 
-                    // it might mean indexing is complete
-                    if health.status == "healthy" && 
-                       health.services.database == "healthy" &&
-                       health.services.sync == "healthy" {
-                        if let Some(indexing) = &health.indexing {
-                            if !indexing.is_running && indexing.active_tasks == 0 {
-                                info!("✓ Rindexer indexing completed (no active tasks)");
-                                return Ok(());
-                            }
-                        } else {
-                            // No indexing status means indexing might be complete
-                            info!("✓ Rindexer appears to be ready (no indexing status)");
-                            return Ok(());
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Health check failed: {}, retrying...", e);
-                }
-            }
-            
-            // Wait before next check
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-        
-        Err(anyhow::anyhow!("Health check timeout after {}s", timeout_seconds))
-    }
-
     /// Wait until the health endpoint responds with HTTP 200, regardless of body schema
     pub async fn wait_for_up(&self, timeout_seconds: u64) -> Result<()> {
         info!("Waiting for health endpoint HTTP 200 (timeout: {}s)", timeout_seconds);
@@ -126,49 +78,5 @@ impl HealthClient {
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
         Err(anyhow::anyhow!("Health endpoint did not return HTTP 200 within {}s", timeout_seconds))
-    }
-
-    pub async fn wait_for_indexing_complete(&self, timeout_seconds: u64) -> Result<()> {
-        info!("Waiting for Rindexer indexing to complete (timeout: {}s)", timeout_seconds);
-        
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
-        
-        while start_time.elapsed() < timeout {
-            match self.get_health().await {
-                Ok(health) => {
-                    debug!("Health status: {:?}", health);
-                    
-                    // Check if indexing is complete
-                    if let Some(indexing) = &health.indexing {
-                        if !indexing.is_running && indexing.active_tasks == 0 {
-                            info!("✓ Rindexer indexing completed (no active tasks)");
-                            return Ok(());
-                        }
-                    } else {
-                        // No indexing status might mean indexing is complete
-                        if health.status == "healthy" && health.services.sync == "healthy" {
-                            info!("✓ Rindexer indexing appears complete (no indexing status)");
-                            return Ok(());
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Health check failed: {}, retrying...", e);
-                }
-            }
-            
-            // Wait before next check
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-        }
-        
-        Err(anyhow::anyhow!("Indexing completion timeout after {}s", timeout_seconds))
-    }
-
-    pub async fn is_healthy(&self) -> bool {
-        match self.get_health().await {
-            Ok(health) => health.status == "healthy",
-            Err(_) => false,
-        }
     }
 }

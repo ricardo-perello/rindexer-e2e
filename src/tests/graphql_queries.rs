@@ -128,7 +128,7 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
                         let mut name = t["name"].as_str().map(|s| s.to_string());
                         let mut kind = t["kind"].as_str().unwrap_or("").to_string();
                         if name.is_none() {
-                            if let Some(ot) = t["ofType"].as_object() { t = &f["type"]["ofType"]; kind = t["kind"].as_str().unwrap_or("").to_string(); name = t["name"].as_str().map(|s| s.to_string()); }
+                            if let Some(_ot) = t["ofType"].as_object() { t = &f["type"]["ofType"]; kind = t["kind"].as_str().unwrap_or("").to_string(); name = t["name"].as_str().map(|s| s.to_string()); }
                         }
                         if name.is_none() {
                             if let Some(_ot2) = t["ofType"].as_object() { t = &t["ofType"]; kind = t["kind"].as_str().unwrap_or("").to_string(); name = t["name"].as_str().map(|s| s.to_string()); }
@@ -198,9 +198,7 @@ fn graphql_basic_query_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
                             Ok(json) => { body = Some(json); break; }
                             Err(e) => { tracing::error!("GraphQL JSON parse error: {}", e); }
                         }
-                    } else {
-                        if let Ok(text) = rsp.text().await { tracing::error!("GraphQL non-200: {}", text); }
-                    }
+                    } else if let Ok(text) = rsp.text().await { tracing::error!("GraphQL non-200: {}", text); }
                 }
                 Err(e) => tracing::error!("GraphQL request error: {}", e),
             }

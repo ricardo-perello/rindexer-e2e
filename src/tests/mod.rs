@@ -29,7 +29,6 @@ use crate::tests::test_runner::{TestRunner, TestRunnerConfig};
 pub async fn run_tests(rindexer_binary: String, test_names: Option<Vec<String>>) -> Result<()> {
     let config = TestRunnerConfig {
         rindexer_binary,
-        test_timeout_seconds: 180,
         anvil_port: 8545,
         health_port: 8080,
     };

@@ -21,7 +21,6 @@ pub struct TestRunner {
 #[derive(Debug, Clone)]
 pub struct TestRunnerConfig {
     pub rindexer_binary: String,
-    pub test_timeout_seconds: u64,
     pub anvil_port: u16,
     pub health_port: u16,
 }
@@ -30,7 +29,6 @@ impl Default for TestRunnerConfig {
     fn default() -> Self {
         Self {
             rindexer_binary: "../rindexer/target/release/rindexer_cli".to_string(),
-            test_timeout_seconds: 180,
             anvil_port: 8545,
             health_port: 8080,
         }

@@ -83,7 +83,7 @@ fn multi_network_mixed_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
             .context("Failed to load expected rETH CSV")?;
         let expected_reth_count = expected_hashes.len();
         
-        let reth_csv_path = produced_csv_path_for(&context, "RocketPoolETH", "transfer");
+        let reth_csv_path = produced_csv_path_for(context, "RocketPoolETH", "transfer");
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(sync_timeout);
         
@@ -114,7 +114,7 @@ fn multi_network_mixed_test(context: &mut TestContext) -> Pin<Box<dyn Future<Out
         info!("✓ rETH CSV validated ({} rows)", expected_hashes.len());
 
         // Validate anvil SimpleERC20 has expected transfers
-        let anvil_csv_path = produced_csv_path_for(&context, "SimpleERC20", "transfer");
+        let anvil_csv_path = produced_csv_path_for(context, "SimpleERC20", "transfer");
         let anvil_hashes = load_tx_hashes_from_csv(&anvil_csv_path)
             .context("Failed to load Anvil CSV")?;
         
