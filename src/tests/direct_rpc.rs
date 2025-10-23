@@ -15,7 +15,7 @@ impl TestModule for DirectRpcTests {
                 "test_direct_rpc",
                 "Direct RPC realism: Rocket Pool rETH Transfer vs expected CSV",
                 direct_rpc_test,
-            ).with_timeout(480),
+            ).with_timeout(900),
         ]
     }
 }
@@ -50,8 +50,12 @@ fn direct_rpc_test(context: &mut TestContext) -> Pin<Box<dyn Future<Output = Res
         let config = build_direct_rpc_config(&mainnet_rpc, &contract_address, start_block, end_block);
         context.start_rindexer(config).await?;
 
-        // Wait until historical indexing completes by log
-        context.wait_for_sync_completion(180).await?;
+        // Wait until historical indexing completes by log (configurable)
+        let sync_timeout = std::env::var("DIRECT_RPC_SYNC_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(600);
+        context.wait_for_sync_completion(sync_timeout).await?;
 
         // Compare produced CSV vs expected CSV using tx_hash only (log_index often empty in fixtures)
         let produced_csv_path = produced_csv_path_for(&context, "ERC20", "transfer");

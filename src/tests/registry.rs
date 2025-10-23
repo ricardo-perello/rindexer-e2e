@@ -75,6 +75,9 @@ impl TestRegistry {
         // Direct RPC tests
         tests.extend(crate::tests::direct_rpc::DirectRpcTests::get_tests());
 
+        // Multi-network tests
+        tests.extend(crate::tests::multi_network::MultiNetworkTests::get_tests());
+
         tests
     }
 

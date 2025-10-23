@@ -11,6 +11,7 @@ pub mod health_assertions;
 pub mod postgres_e2e;
 pub mod graphql_queries;
 pub mod direct_rpc;
+pub mod multi_network;
 
 // Registry and runner
 pub mod registry;
